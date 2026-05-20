@@ -1,13 +1,17 @@
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import AfterValidator, BaseModel, EmailStr, Field
+
+from .password_policy import MAX_LENGTH, validate_password
+
+Password = Annotated[str, Field(max_length=MAX_LENGTH), AfterValidator(validate_password)]
 
 
 class SignupRequest(BaseModel):
     household_name: str = Field(min_length=1, max_length=120)
     display_name: str = Field(min_length=1, max_length=80)
     email: EmailStr
-    password: str = Field(min_length=8, max_length=200)
+    password: Password
 
 
 class LoginRequest(BaseModel):
@@ -34,7 +38,7 @@ class PasswordResetRequest(BaseModel):
 
 
 class PasswordUpdateRequest(BaseModel):
-    new_password: str = Field(min_length=8, max_length=200)
+    new_password: Password
 
 
 class OkResponse(BaseModel):

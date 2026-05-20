@@ -2,10 +2,12 @@ from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
+from ..auth.schemas import Password
+
 
 class CreateMemberRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=8, max_length=200)
+    password: Password
     display_name: str = Field(min_length=1, max_length=80)
 
 
@@ -17,7 +19,7 @@ class CreateMemberResponse(BaseModel):
 
 
 class AdminResetMemberPasswordRequest(BaseModel):
-    new_password: str = Field(min_length=8, max_length=200)
+    new_password: Password
 
 
 class MemberRow(BaseModel):

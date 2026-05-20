@@ -51,6 +51,11 @@ See [.env.example](.env.example) for the full list. Required at startup:
 
 **Refresh** is intentionally **not** an endpoint here — the mobile client uses the Supabase JS SDK to refresh access tokens automatically. See [docs/auth-flow.md](../docs/auth-flow.md#token-refresh-handled-by-the-sdk).
 
+### Input validation
+
+- **Email**: every endpoint that accepts an email uses Pydantic's `EmailStr` (RFC-5322 syntax). Malformed addresses → 422.
+- **Password policy** (enforced on signup, member create, member-password reset, and self password-update — **not** on `/auth/login`): ≥8 chars, must contain at least one lowercase letter, one uppercase letter, one digit, and one special character (`string.punctuation`). Violations → 422 with a message listing what's missing. Single source of truth: [app/auth/password_policy.py](app/auth/password_policy.py).
+
 ## Database
 
 Run migrations in order in the Supabase SQL Editor:

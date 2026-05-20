@@ -411,6 +411,84 @@ def test_admin_deletes_member_and_blocks_future_login(client, created_users):
     assert login.status_code == 401
 
 
+# ---------- Password policy ----------
+
+WEAK_PASSWORDS = [
+    "Short1!",            # too short
+    "alllowercase1!",     # no uppercase
+    "ALLUPPERCASE1!",     # no lowercase
+    "NoDigitsHere!",      # no digit
+    "NoSpecialChar1",     # no special
+]
+
+
+@pytest.mark.parametrize("weak", WEAK_PASSWORDS)
+def test_signup_rejects_weak_password(client, weak):
+    r = client.post("/auth/signup", json={
+        "household_name": "HH", "display_name": "A",
+        "email": unique_email(), "password": weak,
+    })
+    assert r.status_code == 422
+    assert "Password must contain" in r.text
+
+
+@pytest.mark.parametrize("weak", WEAK_PASSWORDS)
+def test_create_member_rejects_weak_password(client, created_users, weak):
+    admin = _signup_admin(client, created_users)
+    r = client.post(
+        "/household/members",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"email": unique_email(), "password": weak, "display_name": "X"},
+    )
+    assert r.status_code == 422
+    assert "Password must contain" in r.text
+
+
+@pytest.mark.parametrize("weak", WEAK_PASSWORDS)
+def test_password_update_rejects_weak_password(client, created_users, weak):
+    admin = _signup_admin(client, created_users)
+    r = client.post(
+        "/auth/password-update",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"new_password": weak},
+    )
+    assert r.status_code == 422
+    assert "Password must contain" in r.text
+
+
+@pytest.mark.parametrize("weak", WEAK_PASSWORDS)
+def test_admin_reset_member_password_rejects_weak_password(client, created_users, weak):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    r = client.post(
+        f"/household/members/{member['user_id']}/password",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"new_password": weak},
+    )
+    assert r.status_code == 422
+    assert "Password must contain" in r.text
+
+
+def test_login_does_not_enforce_password_policy(client, created_users):
+    """Login must accept whatever password the user already has — the policy
+    only applies at creation/update time. A weak password can't exist in the
+    DB (creation is gated), but login itself must not run the validator."""
+    admin = _signup_admin(client, created_users)
+    r = client.post("/auth/login", json={"email": admin["email"], "password": "x"})
+    assert r.status_code == 401
+
+
+# ---------- Email validation ----------
+
+@pytest.mark.parametrize("bad_email", ["not-an-email", "missing@tld", "@no-local.com", "spaces in@x.com"])
+def test_signup_rejects_malformed_email(client, bad_email):
+    r = client.post("/auth/signup", json={
+        "household_name": "HH", "display_name": "A",
+        "email": bad_email, "password": strong_password(),
+    })
+    assert r.status_code == 422
+
+
 # ---------- Expired token (smoke) ----------
 
 @pytest.mark.skip(reason="Requires waiting an hour for natural expiry or manipulating clock; covered by JWT lib.")
