@@ -1,0 +1,115 @@
+Metadata-Version: 2.4
+Name: mathquest-backend
+Version: 0.1.0
+Summary: MathQuest FastAPI backend — auth, gameplay, and parent controls.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn[standard]>=0.32.0
+Requires-Dist: pydantic[email]>=2.9.0
+Requires-Dist: pydantic-settings>=2.5.0
+Requires-Dist: supabase>=2.9.0
+Requires-Dist: gotrue>=2.9.0
+Requires-Dist: python-jose[cryptography]>=3.3.0
+Requires-Dist: httpx>=0.27.0
+Requires-Dist: anthropic>=0.40.0
+Requires-Dist: python-dotenv>=1.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.24.0; extra == "dev"
+Requires-Dist: pytest-env>=1.1.5; extra == "dev"
+Requires-Dist: ruff>=0.7.0; extra == "dev"
+Requires-Dist: mypy>=1.11.0; extra == "dev"
+
+# HouseWise Backend
+
+FastAPI + Supabase. Owns auth, households, and family-member membership.
+
+## Stack
+
+- **Python 3.11+** / **FastAPI**
+- **Supabase** (Postgres + Auth) — JWKS / ES256 verification only, no HS256 shared secret
+- `supabase-py` client with the `service_role` key (server-side only)
+
+## Setup
+
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+copy .env.example .env   # then fill in values
+uvicorn app.main:app --reload
+```
+
+## Environment variables
+
+See [.env.example](.env.example) for the full list. Required at startup:
+
+| Var | Purpose |
+| --- | --- |
+| `SUPABASE_URL` | Project URL, e.g. `https://abc.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-side admin key. **Never** ship to the mobile app. |
+| `SUPABASE_JWKS_URL` | `https://<ref>.supabase.co/auth/v1/.well-known/jwks.json` |
+| `SUPABASE_JWT_ISSUER` | `https://<ref>.supabase.co/auth/v1` |
+| `SUPABASE_JWT_AUDIENCE` | `authenticated` |
+| `APP_DEEP_LINK` | Used as `redirect_to` for invite + password-reset emails. Must be allow-listed in Supabase Dashboard → Auth → URL Configuration. |
+
+## Endpoints
+
+| Method | Path | Auth | Purpose |
+| ------ | ---- | ---- | ------- |
+| POST   | `/auth/signup` | public | Admin self-signup. Creates household + admin user. Returns `{user_id, household_id, email_verification_required: true}`. Does **not** auto-login. |
+| POST   | `/auth/login`  | public | Email + password → Supabase session. Fails 401 if email not yet confirmed. |
+| POST   | `/auth/logout` | bearer | Sign out current device (`scope=local`). |
+| POST   | `/auth/logout-all` | bearer | Sign out all devices (`scope=global`). |
+| POST   | `/auth/password-reset` | public | Send reset email. Always 200 (no email enumeration). |
+| POST   | `/auth/password-update` | bearer | Set new password. Works for both already-logged-in and recovery-link flows. |
+| POST   | `/household/members/invite` | bearer:admin | Invite a family member by email. |
+| POST   | `/household/members/{id}/resend-invite` | bearer:admin | Resend invite. |
+| DELETE | `/household/members/{id}` | bearer:admin | Remove a family member. |
+| GET    | `/me` | bearer | Current user + household snapshot. |
+| GET    | `/health` | public | Liveness. |
+
+**Refresh** is intentionally **not** an endpoint here — the mobile client uses the Supabase JS SDK to refresh access tokens automatically. See [docs/auth-flow.md](../docs/auth-flow.md#token-refresh-handled-by-the-sdk).
+
+## Database
+
+Run [supabase/migrations/0001_init_auth.sql](../supabase/migrations/0001_init_auth.sql) once in the Supabase SQL Editor.
+
+It creates:
+- `public.households`, `public.users` with FKs into `auth.users`
+- `public.user_role` enum (`admin` | `family`)
+- GRANTs for `service_role`, `authenticated`
+- Starter RLS (read-own-household, update-own-profile only)
+- `updated_at` triggers
+- `auth.users → public.users` seed trigger (stub row only; backend still does explicit `UPDATE` per spec §9.4)
+
+## Tests
+
+Integration tests hit a **real Supabase project**. No DB mocking — see [CLAUDE.md §5](../CLAUDE.md).
+
+```powershell
+cd backend
+pip install -r requirements.txt
+# In .env, set TEST_SUPABASE_URL / TEST_SUPABASE_SERVICE_ROLE_KEY /
+# TEST_SUPABASE_JWKS_URL / TEST_SUPABASE_JWT_ISSUER.
+pytest
+```
+
+If `TEST_SUPABASE_*` vars are unset, all integration tests **skip with a clear reason** (they do not silently pass).
+
+Use a **dedicated test project** — tests create and delete users in `auth.users`. They clean up after themselves but accidents happen.
+
+## Non-negotiables baked into this code (§9 of the spec)
+
+1. JWKS / ES256 only — see [app/auth/deps.py](app/auth/deps.py).
+2. Role read from `app_metadata`, never `user_metadata`.
+3. GRANTs on every table even though `service_role` bypasses RLS.
+4. Explicit `UPDATE public.users` after every `auth.admin.create_user` / `invite_user_by_email`.
+5. `SELECT` after `UPDATE` to confirm — the Python client's `.data` on UPDATE is unreliable.
+6. `auth.admin.sign_out(jwt, scope=...)` — takes the **JWT**, not the user_id.
+7. `service_role` never leaves the backend.
+8. Token redaction in logs — see [app/logging_setup.py](app/logging_setup.py).
+
+When adding new tables, repeat steps 3 + 4 for them.

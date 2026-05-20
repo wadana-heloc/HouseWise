@@ -3,6 +3,16 @@ node_modules/
 dist/
 web-build/
 .env
+backend/.env
+backend/.env.*
+!backend/.env.example
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.jks
 *.p8
 *.p12
