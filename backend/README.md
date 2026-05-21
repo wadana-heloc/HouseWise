@@ -47,7 +47,15 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | POST   | `/household/members/{id}/password` | bearer:admin | Admin resets a member's password directly. Does not invalidate the member's existing sessions. |
 | DELETE | `/household/members/{id}` | bearer:admin | Remove a family member. |
 | GET    | `/me` | bearer | Current user + household snapshot. |
+| POST   | `/items` | bearer | Add an item to the caller's household. Server sets `status='pending'`, `added_by=caller`. |
+| GET    | `/items` | bearer | List items in the caller's household. Filters: `status`, `urgent`, `category`, `added_by`. |
+| GET    | `/items/{id}` | bearer | Fetch one item (404 cross-household). |
+| PATCH  | `/items/{id}` | bearer | Update any non-status field. Empty body → 422. |
+| POST   | `/items/{id}/status` | bearer | Transition `status`. Family may set `done` or undo `done→pending`; admin only for `in_review`/`approved`/`rejected` and reopening `rejected→pending`. |
+| DELETE | `/items/{id}` | bearer | Delete. Creator or any admin in the household. |
 | GET    | `/health` | public | Liveness. |
+
+Items flow + state machine + permission matrix: [docs/items-flow.md](../docs/items-flow.md).
 
 **Refresh** is intentionally **not** an endpoint here — the mobile client uses the Supabase JS SDK to refresh access tokens automatically. See [docs/auth-flow.md](../docs/auth-flow.md#token-refresh-handled-by-the-sdk).
 
@@ -63,6 +71,7 @@ Run migrations in order in the Supabase SQL Editor:
 1. [supabase/migrations/0001_init_auth.sql](../supabase/migrations/0001_init_auth.sql) — tables, GRANTs, starter RLS, triggers.
 2. [supabase/migrations/0002_fix_rls_recursion.sql](../supabase/migrations/0002_fix_rls_recursion.sql) — replaces the self-referential `users` / `households` SELECT policies with a `SECURITY DEFINER` `current_household_id()` helper. Without it, any `SELECT` on `public.users` from an authenticated client throws `42P17 infinite recursion`.
 3. [supabase/migrations/0003_reset_and_simplify_auth.sql](../supabase/migrations/0003_reset_and_simplify_auth.sql) — **DESTRUCTIVE.** Wipes `public.households`, `public.users`, and `auth.users` (in that order — `households.admin_id` is `ON DELETE RESTRICT`). Then hardens `users_update_self` with a `with check` clause so a logged-in member cannot self-mutate `role` or `household_id` via direct PostgREST.
+4. [supabase/migrations/0004_init_items.sql](../supabase/migrations/0004_init_items.sql) — `public.items` table + `item_category` / `item_unit` / `item_status` enums + GRANTs + same-household SELECT RLS + `updated_at` trigger.
 
 0001 creates:
 - `public.households`, `public.users` with FKs into `auth.users`

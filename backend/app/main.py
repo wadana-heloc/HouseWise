@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from .auth.router import router as auth_router
 from .household.router import router as household_router
+from .items.router import router as items_router
 from .logging_setup import configure_logging
 from .me.router import router as me_router
 
@@ -20,6 +21,7 @@ app = FastAPI(
 )
 app.include_router(auth_router)
 app.include_router(household_router)
+app.include_router(items_router)
 app.include_router(me_router)
 
 
