@@ -13,6 +13,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../store/authStore';
 import { useItemStore } from '../../store/itemStore';
+import { useMemberStore } from '../../store/memberStore';
 import type { Item } from '../../services/items';
 
 function getGreeting(): string {
@@ -36,12 +37,6 @@ const MOCK_LOW_STOCK = [
     { id: '3', name: 'Toilet paper', flaggedBy: 'Sara' },
 ];
 
-const MOCK_MEMBERS = [
-    { id: '1', name: 'Ahmad', initials: 'AK', role: 'Admin' },
-    { id: '2', name: 'Sara', initials: 'SR', role: 'Family' },
-    { id: '3', name: 'Maha', initials: 'MH', role: 'Family' },
-];
-
 export default function HomeScreen() {
     const router = useRouter();
     const { displayName, userId, role } = useAuthStore();
@@ -51,10 +46,12 @@ export default function HomeScreen() {
     const greeting = getGreeting();
 
     const { items, loading, fetchItems, updateStatus, deleteItem } = useItemStore();
+    const { members, fetchMembers } = useMemberStore();
 
     useFocusEffect(
         useCallback(() => {
             fetchItems();
+            fetchMembers();
         }, []),
     );
 
@@ -279,19 +276,19 @@ export default function HomeScreen() {
                 <View className="px-5 mt-6">
                     <View className="flex-row items-center justify-between mb-3">
                         <Text className="text-[12px] font-medium text-text-muted tracking-wider uppercase">Household members</Text>
-                        <TouchableOpacity onPress={() => router.push('/settings')}>
+                        <TouchableOpacity onPress={() => router.push('/manage-members')}>
                             <Text className="text-[13px] font-medium text-teal-600">Manage</Text>
                         </TouchableOpacity>
                     </View>
                     <View className="flex-row flex-wrap gap-2">
-                        {MOCK_MEMBERS.map((m) => (
+                        {members.map((m) => (
                             <View key={m.id} className="flex-row items-center gap-2 bg-white border border-border rounded-full px-3 py-1.5">
                                 <View className="w-7 h-7 rounded-full bg-teal-50 items-center justify-center">
-                                    <Text className="text-[11px] font-medium text-teal-600">{m.initials}</Text>
+                                    <Text className="text-[11px] font-medium text-teal-600">{getInitials(m.display_name)}</Text>
                                 </View>
                                 <View>
-                                    <Text className="text-[13px] text-text-primary">{m.name}</Text>
-                                    <Text className="text-[11px] text-text-muted">{m.role}</Text>
+                                    <Text className="text-[13px] text-text-primary">{m.display_name}</Text>
+                                    <Text className="text-[11px] text-text-muted capitalize">{m.role}</Text>
                                 </View>
                             </View>
                         ))}

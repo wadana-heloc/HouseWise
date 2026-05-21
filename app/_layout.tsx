@@ -111,6 +111,7 @@ export default function RootLayout() {
       <Stack.Screen name="low-stock" />
       <Stack.Screen name="settings" />
       <Stack.Screen name="add-member" />
+      <Stack.Screen name="manage-members" />
     </Stack>
   );
 }
