@@ -1,0 +1,186 @@
+====================================================
+  HouseWise – Frontend Environment Requirements
+====================================================
+
+TEAM: Mira (Frontend) | Nour (AI) | Raghad (QA) | Belal (Backend)
+STACK: React Native + Expo SDK 54 + TypeScript
+
+
+----------------------------------------------------
+1. SYSTEM REQUIREMENTS
+----------------------------------------------------
+
+Node.js       >= 18.x LTS      https://nodejs.org
+npm           >= 9.x            (comes with Node.js)
+Git           any recent        https://git-scm.com
+OS            Windows / macOS / Linux
+
+
+-- Install via terminal --
+
+  Windows (using winget):
+    winget install OpenJS.NodeJS.LTS
+    winget install Git.Git
+
+  Windows (using Chocolatey):
+    choco install nodejs-lts
+    choco install git
+
+  macOS (using Homebrew):
+    brew install node
+    brew install git
+
+  Ubuntu / Debian Linux:
+    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+    sudo apt-get install -y git
+
+
+-- Verify installation --
+
+  node --version       → should print v18.x.x or higher
+  npm --version        → should print 9.x.x or higher
+  git --version        → should print git version x.x.x
+
+
+----------------------------------------------------
+2. MOBILE DEVICE (to preview the app)
+----------------------------------------------------
+
+Install "Expo Go" on your phone:
+  iOS      → App Store   → search "Expo Go"
+  Android  → Play Store  → search "Expo Go"
+
+Make sure your phone and PC are on the SAME WiFi network.
+
+
+----------------------------------------------------
+3. INSTALL PROJECT DEPENDENCIES
+----------------------------------------------------
+
+Step 1 – Clone the repo and enter the folder:
+
+  git clone <repo-url>
+  cd housewise
+
+Step 2 – Install all npm packages:
+
+  npm install --legacy-peer-deps
+
+  (--legacy-peer-deps is required due to React Native peer dependency quirks)
+
+Step 3 – Install Expo-managed native packages
+  (these must be installed via expo to match the correct SDK versions):
+
+  npx expo install expo-font
+  npx expo install expo-splash-screen
+  npx expo install expo-camera
+  npx expo install expo-barcode-scanner
+  npx expo install expo-notifications
+  npx expo install expo-secure-store
+  npx expo install expo-image
+  npx expo install expo-image-picker
+  npx expo install expo-linking
+  npx expo install expo-constants
+  npx expo install expo-status-bar
+  npx expo install react-native-safe-area-context
+  npx expo install react-native-screens
+  npx expo install react-native-gesture-handler
+  npx expo install react-native-reanimated
+  npx expo install react-native-worklets
+  npx expo install react-native-svg
+
+  Or run them all in one command:
+
+  npx expo install expo-font expo-splash-screen expo-camera expo-barcode-scanner expo-notifications expo-secure-store expo-image expo-image-picker expo-linking expo-constants expo-status-bar react-native-safe-area-context react-native-screens react-native-gesture-handler react-native-reanimated react-native-worklets
+
+Step 4 – Copy the environment file:
+
+  copy .env.example .env        (Windows)
+  cp .env.example .env          (Mac/Linux)
+
+  Then open .env and fill in your values.
+
+----------------------------------------------------
+4. RUN THE APP
+----------------------------------------------------
+
+  npm start
+
+Then:
+  - Press  a  → open on Android emulator
+  - Press  i  → open on iOS simulator (Mac only)
+  - Scan QR code with iPhone Camera app → opens in Expo Go
+  - Scan QR code with Expo Go app      → Android devices
+
+
+----------------------------------------------------
+5. ENVIRONMENT VARIABLES
+----------------------------------------------------
+
+Copy the example env file and fill in your values:
+
+  cp .env.example .env        (Mac/Linux)
+  copy .env.example .env      (Windows)
+
+Variables:
+  EXPO_PUBLIC_API_URL          → Backend FastAPI URL (default: http://localhost:8000)
+  EXPO_PUBLIC_OFF_API_URL      → Open Food Facts API (no key needed)
+  EXPO_PUBLIC_EXPO_PROJECT_ID  → From expo.dev dashboard (needed for push notifications)
+
+
+----------------------------------------------------
+6. PROJECT STRUCTURE
+----------------------------------------------------
+
+  app/          → Screens (Expo Router – file-based navigation)
+  components/   → Reusable UI components
+  constants/    → Colors, config, roles
+  hooks/        → Custom React hooks
+  lib/          → API client, storage helpers
+  store/        → Zustand global state
+  types/        → Shared TypeScript types
+  assets/       → Images, fonts
+
+
+----------------------------------------------------
+7. KEY DEPENDENCIES (auto-installed via npm install)
+----------------------------------------------------
+
+  expo ~54.0.0                      Core Expo SDK
+  expo-router ~6.0.0                File-based navigation + deep links
+  expo-camera ~17.0.0               Barcode scanning
+  expo-notifications ~0.32.0        Push notifications
+  expo-secure-store ~15.0.0         Secure token storage
+  react-native 0.81.5               Core RN
+  @tanstack/react-query ^5.0.0      Data fetching & caching
+  zustand ^5.0.0                    Global state management
+  nativewind ^4.0.0                 Tailwind CSS for React Native
+  axios ^1.7.0                      HTTP client
+  react-hook-form ^7.0.0            Form handling
+  zod ^3.0.0                        Schema validation
+
+
+----------------------------------------------------
+8. TROUBLESHOOTING
+----------------------------------------------------
+
+"SDK mismatch" in Expo Go
+  → Run: npx expo install --fix
+  → Then: npm install --legacy-peer-deps
+
+"Cannot find module" errors
+  → Delete node_modules and reinstall:
+     rmdir /s /q node_modules     (Windows)
+     rm -rf node_modules          (Mac/Linux)
+     npm install --legacy-peer-deps
+
+QR code not connecting
+  → Make sure phone and PC are on same WiFi
+  → Press  s  in terminal to switch to tunnel mode
+
+Metro bundler cache issues
+  → npm start -- --clear
+
+
+====================================================

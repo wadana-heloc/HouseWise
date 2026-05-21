@@ -50,23 +50,24 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | --- | --- |
 | `SUPABASE_URL` | Project URL, e.g. `https://abc.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-side admin key. **Never** ship to the mobile app. |
+| `SUPABASE_ANON_KEY` | Used by the `/auth/login` and signup auto-login paths so the service_role client never has a user session attached. |
 | `SUPABASE_JWKS_URL` | `https://<ref>.supabase.co/auth/v1/.well-known/jwks.json` |
 | `SUPABASE_JWT_ISSUER` | `https://<ref>.supabase.co/auth/v1` |
 | `SUPABASE_JWT_AUDIENCE` | `authenticated` |
-| `APP_DEEP_LINK` | Used as `redirect_to` for invite + password-reset emails. Must be allow-listed in Supabase Dashboard → Auth → URL Configuration. |
+| `APP_DEEP_LINK` | `redirect_to` for the **admin** password-reset email. Only remaining email-link flow. Must be allow-listed in Supabase Dashboard → Auth → URL Configuration. |
 
 ## Endpoints
 
 | Method | Path | Auth | Purpose |
 | ------ | ---- | ---- | ------- |
-| POST   | `/auth/signup` | public | Admin self-signup. Creates household + admin user. Returns `{user_id, household_id, email_verification_required: true}`. Does **not** auto-login. |
-| POST   | `/auth/login`  | public | Email + password → Supabase session. Fails 401 if email not yet confirmed. |
+| POST   | `/auth/signup` | public | Admin self-signup. Creates household + admin user with `email_confirm=True`, then auto-logs-in. Returns `{user_id, household_id, session}`. |
+| POST   | `/auth/login`  | public | Email + password → Supabase session. No email-confirm gating. |
 | POST   | `/auth/logout` | bearer | Sign out current device (`scope=local`). |
 | POST   | `/auth/logout-all` | bearer | Sign out all devices (`scope=global`). |
-| POST   | `/auth/password-reset` | public | Send reset email. Always 200 (no email enumeration). |
-| POST   | `/auth/password-update` | bearer | Set new password. Works for both already-logged-in and recovery-link flows. |
-| POST   | `/household/members/invite` | bearer:admin | Invite a family member by email. |
-| POST   | `/household/members/{id}/resend-invite` | bearer:admin | Resend invite. |
+| POST   | `/auth/password-reset` | public | **Admin-only.** Sends reset email if and only if the address belongs to a `role='admin'` user. Always 200 (no enumeration). Members forgot their password → admin uses `/household/members/{id}/password`. |
+| POST   | `/auth/password-update` | bearer | Set new password for the bearer's account. Works for admins and members. |
+| POST   | `/household/members` | bearer:admin | Create a family member with `{email, password, display_name}`. No invite email. Member can log in immediately. |
+| POST   | `/household/members/{id}/password` | bearer:admin | Admin resets a member's password directly. Does not invalidate the member's existing sessions. |
 | DELETE | `/household/members/{id}` | bearer:admin | Remove a family member. |
 | GET    | `/me` | bearer | Current user + household snapshot. |
 | GET    | `/health` | public | Liveness. |
@@ -75,13 +76,17 @@ See [.env.example](.env.example) for the full list. Required at startup:
 
 ## Database
 
-Run [supabase/migrations/0001_init_auth.sql](../supabase/migrations/0001_init_auth.sql) once in the Supabase SQL Editor.
+Run migrations in order in the Supabase SQL Editor:
 
-It creates:
+1. [supabase/migrations/0001_init_auth.sql](../supabase/migrations/0001_init_auth.sql) — tables, GRANTs, starter RLS, triggers.
+2. [supabase/migrations/0002_fix_rls_recursion.sql](../supabase/migrations/0002_fix_rls_recursion.sql) — replaces the self-referential `users` / `households` SELECT policies with a `SECURITY DEFINER` `current_household_id()` helper. Without it, any `SELECT` on `public.users` from an authenticated client throws `42P17 infinite recursion`.
+3. [supabase/migrations/0003_reset_and_simplify_auth.sql](../supabase/migrations/0003_reset_and_simplify_auth.sql) — **DESTRUCTIVE.** Wipes `public.households`, `public.users`, and `auth.users` (in that order — `households.admin_id` is `ON DELETE RESTRICT`). Then hardens `users_update_self` with a `with check` clause so a logged-in member cannot self-mutate `role` or `household_id` via direct PostgREST.
+
+0001 creates:
 - `public.households`, `public.users` with FKs into `auth.users`
 - `public.user_role` enum (`admin` | `family`)
 - GRANTs for `service_role`, `authenticated`
-- Starter RLS (read-own-household, update-own-profile only)
+- Starter RLS (read-own-household, update-own-profile only) — **superseded by 0002 for the SELECT policies**
 - `updated_at` triggers
 - `auth.users → public.users` seed trigger (stub row only; backend still does explicit `UPDATE` per spec §9.4)
 
@@ -106,7 +111,7 @@ Use a **dedicated test project** — tests create and delete users in `auth.user
 1. JWKS / ES256 only — see [app/auth/deps.py](app/auth/deps.py).
 2. Role read from `app_metadata`, never `user_metadata`.
 3. GRANTs on every table even though `service_role` bypasses RLS.
-4. Explicit `UPDATE public.users` after every `auth.admin.create_user` / `invite_user_by_email`.
+4. Explicit `UPDATE public.users` after every `auth.admin.create_user`.
 5. `SELECT` after `UPDATE` to confirm — the Python client's `.data` on UPDATE is unreliable.
 6. `auth.admin.sign_out(jwt, scope=...)` — takes the **JWT**, not the user_id.
 7. `service_role` never leaves the backend.
