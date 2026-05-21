@@ -1,12 +1,16 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from ..auth.deps import CurrentUser, require_role
+from ..auth.deps import CurrentUser, current_user, require_role
 from ..auth.schemas import OkResponse
 from ..supabase_client import get_supabase
 from .schemas import (
     AdminResetMemberPasswordRequest,
     CreateMemberRequest,
     CreateMemberResponse,
+    MemberListResponse,
+    MemberRow,
 )
 
 router = APIRouter(prefix="/household/members", tags=["household"])
@@ -17,6 +21,77 @@ def _admin_household_id(sb, admin_id: str) -> str:
     if not row.data or row.data.get("role") != "admin" or not row.data.get("household_id"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Caller is not an admin of a household")
     return row.data["household_id"]
+
+
+def _member_household_id(sb, user_id: str) -> str:
+    row = sb.table("users").select("household_id").eq("id", user_id).single().execute()
+    if not row.data or not row.data.get("household_id"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Caller is not in a household")
+    return row.data["household_id"]
+
+
+@router.get(
+    "",
+    response_model=MemberListResponse,
+    summary="List all members in the caller's household",
+)
+def list_members(user: CurrentUser = Depends(current_user)):
+    """Return every member of the caller's household (admin + family).
+
+    Any authenticated household member may call this — admins to manage,
+    family to render the roster (e.g. the home-screen member chips).
+    Write endpoints in this module remain admin-only.
+
+    Ordering is `role asc, created_at asc`: the admin appears first
+    (`'admin' < 'family'` lexicographically), then family by join order.
+
+    Errors: 401 missing/invalid bearer. 403 caller is not in a household.
+    """
+    sb = get_supabase()
+    household_id = _member_household_id(sb, user.id)
+
+    res = (
+        sb.table("users")
+        .select("id, email, display_name, role")
+        .eq("household_id", household_id)
+        .order("role")
+        .order("created_at")
+        .execute()
+    )
+    return MemberListResponse(members=res.data or [])
+
+
+@router.get(
+    "/{member_id}",
+    response_model=MemberRow,
+    summary="Fetch a single household member",
+)
+def get_member(member_id: UUID, user: CurrentUser = Depends(current_user)):
+    """Fetch one member of the caller's household by id.
+
+    Any authenticated household member may read any other member in the
+    same household (including the admin, and including themselves — for
+    self-reads `/me` is also available and returns more context).
+
+    Cross-household reads return 404 so existence isn't leaked.
+
+    Errors: 401 missing/invalid bearer. 403 caller is not in a household.
+    404 member not found or not in caller's household. 422 `member_id` is
+    not a UUID.
+    """
+    sb = get_supabase()
+    household_id = _member_household_id(sb, user.id)
+
+    res = (
+        sb.table("users")
+        .select("id, email, display_name, role")
+        .eq("id", str(member_id))
+        .eq("household_id", household_id)
+        .execute()
+    )
+    if not res.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Member not found")
+    return res.data[0]
 
 
 @router.post(

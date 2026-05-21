@@ -27,3 +27,7 @@ class MemberRow(BaseModel):
     email: EmailStr
     display_name: str
     role: Literal["admin", "family"]
+
+
+class MemberListResponse(BaseModel):
+    members: list[MemberRow]

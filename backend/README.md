@@ -43,6 +43,8 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | POST   | `/auth/logout-all` | bearer | Sign out all devices (`scope=global`). |
 | POST   | `/auth/password-reset` | public | **Admin-only.** Sends reset email if and only if the address belongs to a `role='admin'` user. Always 200 (no enumeration). Members forgot their password → admin uses `/household/members/{id}/password`. |
 | POST   | `/auth/password-update` | bearer | Set new password for the bearer's account. Works for admins and members. |
+| GET    | `/household/members` | bearer | List all members of the caller's household (admin first, then family by join order). Readable by any household member; writes below remain admin-only. |
+| GET    | `/household/members/{id}` | bearer | Fetch one member by id. Any household member may read any other in the same household. 404 cross-household. |
 | POST   | `/household/members` | bearer:admin | Create a family member with `{email, password, display_name}`. No invite email. Member can log in immediately. |
 | POST   | `/household/members/{id}/password` | bearer:admin | Admin resets a member's password directly. Does not invalidate the member's existing sessions. |
 | DELETE | `/household/members/{id}` | bearer:admin | Remove a family member. |

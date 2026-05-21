@@ -196,6 +196,119 @@ def test_family_cannot_create_or_delete_members(client, created_users):
     assert me_resp.status_code == 200
 
 
+# ---------- Member reads (admin + family) ----------
+
+def test_admin_lists_members_includes_self_and_family(client, created_users):
+    admin = _signup_admin(client, created_users, household_name="ListHH")
+    member = _create_member(client, admin["access_token"], created_users, display_name="Fam1")
+
+    r = client.get(
+        "/household/members",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert r.status_code == 200, r.text
+    rows = r.json()["members"]
+    ids = {row["id"]: row for row in rows}
+    assert admin["user_id"] in ids
+    assert member["user_id"] in ids
+    assert ids[admin["user_id"]]["role"] == "admin"
+    assert ids[member["user_id"]]["role"] == "family"
+    assert rows[0]["role"] == "admin", "Admin should sort first"
+
+
+def test_family_lists_members_sees_full_roster(client, created_users):
+    admin = _signup_admin(client, created_users)
+    m1 = _create_member(client, admin["access_token"], created_users)
+    m2 = _create_member(client, admin["access_token"], created_users)
+    fam_token = client.post(
+        "/auth/login",
+        json={"email": m1["email"], "password": m1["password"]},
+    ).json()["access_token"]
+
+    r = client.get("/household/members", headers={"Authorization": f"Bearer {fam_token}"})
+    assert r.status_code == 200
+    ids = {row["id"] for row in r.json()["members"]}
+    assert {admin["user_id"], m1["user_id"], m2["user_id"]} <= ids
+
+
+def test_admin_gets_family_member_by_id(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users, display_name="Tap me")
+
+    r = client.get(
+        f"/household/members/{member['user_id']}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["id"] == member["user_id"]
+    assert body["email"] == member["email"]
+    assert body["display_name"] == "Tap me"
+    assert body["role"] == "family"
+
+
+def test_family_gets_admin_by_id(client, created_users):
+    admin = _signup_admin(client, created_users, display_name="The Admin")
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = client.post(
+        "/auth/login",
+        json={"email": member["email"], "password": member["password"]},
+    ).json()["access_token"]
+
+    r = client.get(
+        f"/household/members/{admin['user_id']}",
+        headers={"Authorization": f"Bearer {fam_token}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["role"] == "admin"
+
+
+def test_admin_gets_self_by_id(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = client.get(
+        f"/household/members/{admin['user_id']}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["id"] == admin["user_id"]
+
+
+def test_get_member_cross_household_returns_404(client, created_users):
+    admin1 = _signup_admin(client, created_users, household_name="H1")
+    admin2 = _signup_admin(client, created_users, household_name="H2")
+    member1 = _create_member(client, admin1["access_token"], created_users)
+
+    r = client.get(
+        f"/household/members/{member1['user_id']}",
+        headers={"Authorization": f"Bearer {admin2['access_token']}"},
+    )
+    assert r.status_code == 404
+
+
+def test_get_nonexistent_member_returns_404(client, created_users):
+    admin = _signup_admin(client, created_users)
+    import uuid
+    r = client.get(
+        f"/household/members/{uuid.uuid4()}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert r.status_code == 404
+
+
+def test_get_member_non_uuid_returns_422(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = client.get(
+        "/household/members/not-a-uuid",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert r.status_code == 422
+
+
+def test_list_members_without_bearer_returns_401(client):
+    r = client.get("/household/members")
+    assert r.status_code in (401, 403)
+
+
 # ---------- Password management ----------
 
 def test_admin_resets_member_password(client, created_users):
