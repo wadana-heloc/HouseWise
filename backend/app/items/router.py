@@ -79,8 +79,18 @@ def _check_transition(current: str, new: str, role: str) -> None:
     summary="Add an item to the household list",
 )
 def create_item(body: ItemCreate, user: CurrentUser = Depends(current_user)):
-    """Create an item in the caller's household with `status='pending'` and
-    `added_by=caller.id`. Any household member can call this.
+    """Add an item to the caller's household shopping list.
+
+    The server sets `status='pending'`, `added_by=caller.id`, and
+    `household_id` from the caller's profile — clients cannot override these.
+    Any authenticated household member (admin or family) may call this.
+
+    The new item enters the approval workflow at `pending`. Use
+    `POST /items/{id}/status` to advance it (see that endpoint for the
+    permission matrix).
+
+    Errors: 401 missing/invalid bearer. 403 caller is not in a household.
+    422 on schema validation (bad enum, `quantity <= 0`, `name` too long, etc.).
     """
     sb = get_supabase()
     household_id, _ = _user_household(sb, user.id)
@@ -108,13 +118,25 @@ def create_item(body: ItemCreate, user: CurrentUser = Depends(current_user)):
 )
 def list_items(
     user: CurrentUser = Depends(current_user),
-    status_filter: Optional[ItemStatus] = Query(default=None, alias="status"),
-    urgent: Optional[bool] = None,
-    category: Optional[ItemCategory] = None,
-    added_by: Optional[str] = None,
+    status_filter: Optional[ItemStatus] = Query(
+        default=None,
+        alias="status",
+        description="Filter by status. One of: pending, in_review, approved, rejected, done.",
+    ),
+    urgent: Optional[bool] = Query(default=None, description="If true, return only urgent items."),
+    category: Optional[ItemCategory] = Query(default=None, description="Filter by category."),
+    added_by: Optional[str] = Query(default=None, description="Filter by creator user id."),
 ):
-    """List items in the caller's household, newest first. Urgent items float
-    to the top. All filters are optional and AND-combined.
+    """List items in the caller's household.
+
+    Ordering: `urgent desc, created_at desc` — urgent items float to the top,
+    then newest first within each group.
+
+    All query filters are optional and AND-combined. Cross-household items are
+    never returned (every query is scoped to the caller's `household_id`).
+
+    Errors: 401 missing/invalid bearer. 403 caller is not in a household.
+    422 if a query parameter has an invalid enum value.
     """
     sb = get_supabase()
     household_id, _ = _user_household(sb, user.id)
@@ -138,6 +160,14 @@ def list_items(
     summary="Fetch a single item",
 )
 def get_item(item_id: UUID, user: CurrentUser = Depends(current_user)):
+    """Fetch a single item by id.
+
+    The item must belong to the caller's household. Cross-household reads
+    return 404 (not 403) so existence isn't leaked.
+
+    Errors: 401 missing/invalid bearer. 403 caller is not in a household.
+    404 item not found or not in caller's household. 422 `item_id` is not a UUID.
+    """
     sb = get_supabase()
     household_id, _ = _user_household(sb, user.id)
     return _fetch_item_in_household(sb, str(item_id), household_id)
@@ -153,8 +183,18 @@ def update_item(
     body: ItemUpdate,
     user: CurrentUser = Depends(current_user),
 ):
-    """Update any non-status field. Any household member can call this. To
-    change `status`, use `POST /items/{id}/status`.
+    """Patch any non-status field on an existing item.
+
+    Editable fields: `name`, `category`, `quantity`, `unit`, `urgent`, `notes`.
+    Only the fields you include in the body are touched. To change `status`,
+    use `POST /items/{id}/status` — this endpoint will not.
+
+    Any authenticated household member may patch any item in their household
+    (not restricted to the creator). Cross-household patches return 404.
+
+    Errors: 401 missing/invalid bearer. 403 caller is not in a household.
+    404 item not found or not in caller's household. 422 empty body, bad enum,
+    `quantity <= 0`, or `item_id` is not a UUID.
     """
     sb = get_supabase()
     household_id, _ = _user_household(sb, user.id)
@@ -179,9 +219,24 @@ def update_status(
     body: ItemStatusUpdate,
     user: CurrentUser = Depends(current_user),
 ):
-    """Move an item to a new status. Anyone may set `done` or undo
-    `done -> pending`. Only admins may set `in_review`, `approved`, `rejected`,
-    or reopen a rejected item.
+    """Transition an item's `status` field.
+
+    Allowed transitions:
+
+    - **Any household member** may set `done` (from any state) or undo
+      `done -> pending`.
+    - **Admins only** may set `in_review`, `approved`, or `rejected` from
+      `pending`; move between `in_review`, `approved`, `rejected`, and
+      `pending`; or reopen `rejected -> pending`.
+    - Setting the same status (no-op) is accepted and returns the row unchanged.
+
+    Anything else is rejected with **400 Invalid status transition**. Full
+    state machine: see [docs/items-flow.md](../docs/items-flow.md).
+
+    Errors: 400 transition is not in the allowed set. 401 missing/invalid bearer.
+    403 caller is not in a household, or is a non-admin attempting an admin-only
+    transition. 404 item not found or not in caller's household. 422 unknown
+    `status` value or `item_id` is not a UUID.
     """
     sb = get_supabase()
     household_id, role = _user_household(sb, user.id)
@@ -200,8 +255,18 @@ def update_status(
     summary="Delete an item",
 )
 def delete_item(item_id: UUID, user: CurrentUser = Depends(current_user)):
-    """Permanently delete an item. Allowed for the original creator
-    (`added_by == caller`) or any admin in the household.
+    """Permanently delete an item.
+
+    Allowed only for the original creator (`added_by == caller.id`) or any
+    admin in the same household. Any other household member gets 403.
+    Cross-household deletes return 404.
+
+    The delete is hard — there is no soft-delete column. If you need an
+    audit trail of removed items, that's a future feature.
+
+    Errors: 401 missing/invalid bearer. 403 caller is not in a household, or
+    is a non-creator, non-admin family member. 404 item not found or not in
+    caller's household. 422 `item_id` is not a UUID.
     """
     sb = get_supabase()
     household_id, role = _user_household(sb, user.id)
