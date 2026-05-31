@@ -112,6 +112,10 @@ export default function RootLayout() {
       <Stack.Screen name="settings" />
       <Stack.Screen name="add-member" />
       <Stack.Screen name="manage-members" />
+      <Stack.Screen name="edit-profile" />
+      <Stack.Screen name="health-preferences" />
+      <Stack.Screen name="family-members" />
+      <Stack.Screen name="preferred-stores" />
     </Stack>
   );
 }

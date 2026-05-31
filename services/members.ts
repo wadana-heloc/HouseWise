@@ -15,3 +15,14 @@ export async function listMembers(): Promise<Member[]> {
 export async function deleteMember(memberId: string): Promise<void> {
   await api.delete(`/household/members/${memberId}`);
 }
+
+export async function updateMember(
+  memberId: string,
+  params: { display_name?: string; email?: string },
+): Promise<void> {
+  await api.patch(`/household/members/${memberId}`, params);
+}
+
+export async function resetMemberPassword(memberId: string, newPassword: string): Promise<void> {
+  await api.post(`/household/members/${memberId}/password`, { new_password: newPassword });
+}
