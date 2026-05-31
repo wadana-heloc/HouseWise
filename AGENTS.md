@@ -57,12 +57,16 @@ backend/
     me/
       router.py        # GET /me, PATCH /me/profile, PATCH /me/health-preferences
       schemas.py       # MeUser/MeHousehold/MeResponse, HealthPreferences*, ProfileUpdate
+    stores/
+      router.py        # /stores/* — admin-managed, family-readable store list
+      schemas.py       # StoreCreate/Update/Out + _normalize_url
   tests/
     conftest.py        # skip-if-unconfigured, real-Supabase fixtures
     test_auth.py       # §10 test plan
     test_items.py      # items CRUD + status transitions + permissions
     test_low_stock.py  # low-stock flag CRUD + uniqueness
     test_me.py         # self profile updates + health preferences
+    test_stores.py     # stores CRUD + URL normalization + uniqueness
   requirements.txt
   .env.example         # template
   .env                 # local-only, gitignored
@@ -77,12 +81,14 @@ supabase/
     0004_init_items.sql                      # items table + enums + RLS
     0005_user_profile_and_health_prefs.sql   # adds users.health_preferences jsonb
     0006_init_low_stock.sql                  # low_stock_flags table + unique (household, lower(name))
+    0007_init_stores.sql                     # stores table + unique (household, lower(name)) + RLS
 
 docs/
   auth-flow.md         # runtime sequences, SDK refresh, failure modes
   items-flow.md        # items endpoints, permission matrix, status state machine
   low-stock-flow.md    # low-stock flags, uniqueness, open-delete rule
   profile-flow.md      # self profile + health-preferences + admin member-patch
+  stores-flow.md       # stores CRUD, URL normalization, admin/family permission split
 ```
 
 ---

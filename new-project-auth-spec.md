@@ -246,6 +246,10 @@ All paths under `/auth`. Public = no token required. Auth = bearer required.
 | POST   | `/low-stock`                        | bearer       | Flag an item as running low in the caller's household. 409 if the name is already flagged (any member). |
 | GET    | `/low-stock`                        | bearer       | List the caller's household low-stock flags, newest first. Includes flagger display name.              |
 | DELETE | `/low-stock/{flag_id}`              | bearer       | Clear a flag. Open to any household member. 404 cross-household.                                       |
+| POST   | `/stores`                           | bearer:admin | Add a store. URL normalized (bare hosts accepted). 409 on name conflict. 422 on invalid URL.           |
+| GET    | `/stores`                           | bearer       | List the caller's household stores, alphabetical. Any household member may read.                       |
+| PATCH  | `/stores/{store_id}`                | bearer:admin | Update `name` and/or `url`. Same uniqueness + URL rules as POST. 404 cross-household.                  |
+| DELETE | `/stores/{store_id}`                | bearer:admin | Remove a store. 404 cross-household.                                                                   |
 
 Refresh is handled by the Supabase JS SDK on the client — there is no `/auth/refresh` endpoint on the backend.
 
@@ -402,6 +406,7 @@ Integration tests against a real Supabase project (no mocking the DB):
   - **Household roster reads:** family members may `GET /household/members` and `GET /household/members/{id}` for anyone in their own household (drives the home-screen member chips). All writes on `/household/members/*` remain admin-only.
   - **Self profile + health preferences:** any household member can `PATCH /me/profile` (`display_name`, `email`) and `PATCH /me/health-preferences` (per-user dietary toggles, JSONB-backed). Health prefs are strictly self-managed — there is no admin endpoint to set them on another user. Admins additionally get `PATCH /household/members/{id}` to fix a member's name/email (mirrors the existing password-reset endpoint).
   - **Low-stock flags:** any household member can create/list/delete low-stock flags (`/low-stock/*`). One flag per name per household — re-flagging an already-flagged name (by anyone) → 409. Delete is open to every member, not just the creator, since the panel is a shared shopping signal.
+  - **Stores:** admin-managed, family-readable. Admin creates/updates/deletes stores (`POST/PATCH/DELETE /stores`); any household member can `GET /stores`. One store per name per household (case-insensitive). URLs are normalized (`carrefour.ae` → `https://carrefour.ae/`).
 - Do you want admins to be able to **transfer ownership** of a household? (Out of scope for v1 unless you say otherwise.)
 - Do you want **soft-delete** of family members (keep history) or hard-delete? Spec assumes hard-delete via `on delete cascade`.
 - Followup: today `_admin_household_id` reads role from `public.users`, not the JWT. Combined with the 0003 `with check`, the privilege escalation is closed. Worth refactoring role checks to read exclusively from the signed JWT.

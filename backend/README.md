@@ -61,10 +61,15 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | POST   | `/low-stock` | bearer | Flag an item as running low. 409 if the name is already flagged in this household (any member). |
 | GET    | `/low-stock` | bearer | List the caller's household flags, newest first. Each row includes `added_by_display_name`. |
 | DELETE | `/low-stock/{flag_id}` | bearer | Clear a flag. Any household member may delete any flag. |
+| POST   | `/stores` | bearer:admin | Add a store (`name`, `url`). URL normalized (bare hosts accepted). 409 if the name is already in this household. |
+| GET    | `/stores` | bearer | List the caller's household stores, alphabetical. Any member can read. |
+| PATCH  | `/stores/{store_id}` | bearer:admin | Update name and/or URL. Same uniqueness + URL rules as POST. |
+| DELETE | `/stores/{store_id}` | bearer:admin | Remove a store. |
 | GET    | `/health` | public | Liveness. |
 
 Items flow + state machine + permission matrix: [docs/items-flow.md](../docs/items-flow.md).
 Low-stock flags (per-household, name-unique): [docs/low-stock-flow.md](../docs/low-stock-flow.md).
+Stores (admin-managed, family-readable): [docs/stores-flow.md](../docs/stores-flow.md).
 Profile + health-preferences flow: [docs/profile-flow.md](../docs/profile-flow.md).
 
 **Refresh** is intentionally **not** an endpoint here — the mobile client uses the Supabase JS SDK to refresh access tokens automatically. See [docs/auth-flow.md](../docs/auth-flow.md#token-refresh-handled-by-the-sdk).
@@ -84,6 +89,7 @@ Run migrations in order in the Supabase SQL Editor:
 4. [supabase/migrations/0004_init_items.sql](../supabase/migrations/0004_init_items.sql) — `public.items` table + `item_category` / `item_unit` / `item_status` enums + GRANTs + same-household SELECT RLS + `updated_at` trigger.
 5. [supabase/migrations/0005_user_profile_and_health_prefs.sql](../supabase/migrations/0005_user_profile_and_health_prefs.sql) — adds `public.users.health_preferences jsonb not null default '{}'::jsonb`. Application-level schema in [backend/app/me/schemas.py](app/me/schemas.py) pins the known toggle keys.
 6. [supabase/migrations/0006_init_low_stock.sql](../supabase/migrations/0006_init_low_stock.sql) — `public.low_stock_flags` + unique `(household_id, lower(name))` + GRANTs + same-household SELECT RLS + `updated_at` trigger.
+7. [supabase/migrations/0007_init_stores.sql](../supabase/migrations/0007_init_stores.sql) — `public.stores` + unique `(household_id, lower(name))` + GRANTs + same-household SELECT RLS + `updated_at` trigger.
 
 0001 creates:
 - `public.households`, `public.users` with FKs into `auth.users`
