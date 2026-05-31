@@ -58,9 +58,14 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | PATCH  | `/items/{id}` | bearer | Update any non-status field. Empty body → 422. |
 | POST   | `/items/{id}/status` | bearer | Transition `status`. Family may set `done` or undo `done→pending`; admin only for `in_review`/`approved`/`rejected` and reopening `rejected→pending`. |
 | DELETE | `/items/{id}` | bearer | Delete. Creator or any admin in the household. |
+| POST   | `/low-stock` | bearer | Flag an item as running low. 409 if the name is already flagged in this household (any member). |
+| GET    | `/low-stock` | bearer | List the caller's household flags, newest first. Each row includes `added_by_display_name`. |
+| DELETE | `/low-stock/{flag_id}` | bearer | Clear a flag. Any household member may delete any flag. |
 | GET    | `/health` | public | Liveness. |
 
 Items flow + state machine + permission matrix: [docs/items-flow.md](../docs/items-flow.md).
+Low-stock flags (per-household, name-unique): [docs/low-stock-flow.md](../docs/low-stock-flow.md).
+Profile + health-preferences flow: [docs/profile-flow.md](../docs/profile-flow.md).
 
 **Refresh** is intentionally **not** an endpoint here — the mobile client uses the Supabase JS SDK to refresh access tokens automatically. See [docs/auth-flow.md](../docs/auth-flow.md#token-refresh-handled-by-the-sdk).
 
@@ -78,6 +83,7 @@ Run migrations in order in the Supabase SQL Editor:
 3. [supabase/migrations/0003_reset_and_simplify_auth.sql](../supabase/migrations/0003_reset_and_simplify_auth.sql) — **DESTRUCTIVE.** Wipes `public.households`, `public.users`, and `auth.users` (in that order — `households.admin_id` is `ON DELETE RESTRICT`). Then hardens `users_update_self` with a `with check` clause so a logged-in member cannot self-mutate `role` or `household_id` via direct PostgREST.
 4. [supabase/migrations/0004_init_items.sql](../supabase/migrations/0004_init_items.sql) — `public.items` table + `item_category` / `item_unit` / `item_status` enums + GRANTs + same-household SELECT RLS + `updated_at` trigger.
 5. [supabase/migrations/0005_user_profile_and_health_prefs.sql](../supabase/migrations/0005_user_profile_and_health_prefs.sql) — adds `public.users.health_preferences jsonb not null default '{}'::jsonb`. Application-level schema in [backend/app/me/schemas.py](app/me/schemas.py) pins the known toggle keys.
+6. [supabase/migrations/0006_init_low_stock.sql](../supabase/migrations/0006_init_low_stock.sql) — `public.low_stock_flags` + unique `(household_id, lower(name))` + GRANTs + same-household SELECT RLS + `updated_at` trigger.
 
 0001 creates:
 - `public.households`, `public.users` with FKs into `auth.users`
