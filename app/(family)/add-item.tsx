@@ -33,7 +33,7 @@ export default function FamilyAddItemScreen() {
       Alert.alert('Item name required', 'Please enter the item name before adding.');
       return;
     }
-    const quantity = Math.max(1, parseInt(qty, 10) || 1);
+    const quantity = Math.max(0.5, parseFloat(qty) || 0.5);
     setSubmitting(true);
     try {
       await addItem({
@@ -100,7 +100,7 @@ export default function FamilyAddItemScreen() {
             <View className="flex-row items-center bg-white border border-border rounded-xl overflow-hidden" style={{ width: 120 }}>
               <TouchableOpacity
                 className="px-3 py-3.5 items-center justify-center"
-                onPress={() => setQty((v) => String(Math.max(1, Number(v) - 1)))}
+                onPress={() => setQty((v) => String(Math.max(0.5, Math.round((Number(v) - 0.5) * 10) / 10)))}
               >
                 <Ionicons name="remove" size={18} color="#7AAA96" />
               </TouchableOpacity>
@@ -108,11 +108,11 @@ export default function FamilyAddItemScreen() {
                 className="flex-1 text-center text-[16px] font-medium text-text-primary"
                 value={qty}
                 onChangeText={setQty}
-                keyboardType="numeric"
+                keyboardType="decimal-pad"
               />
               <TouchableOpacity
                 className="px-3 py-3.5 items-center justify-center"
-                onPress={() => setQty((v) => String(Number(v) + 1))}
+                onPress={() => setQty((v) => String(Math.round((Number(v) + 0.5) * 10) / 10))}
               >
                 <Ionicons name="add" size={18} color="#1D9E75" />
               </TouchableOpacity>

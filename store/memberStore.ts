@@ -8,6 +8,7 @@ interface MemberState {
   error: string | null;
   fetchMembers: () => Promise<void>;
   deleteMember: (id: string) => Promise<void>;
+  updateMember: (id: string, params: { display_name?: string; email?: string }) => Promise<void>;
 }
 
 export const useMemberStore = create<MemberState>((set, get) => ({
@@ -38,5 +39,20 @@ export const useMemberStore = create<MemberState>((set, get) => ({
       set({ members: prev });
       throw err;
     }
+  },
+
+  async updateMember(id, params) {
+    await memberService.updateMember(id, params);
+    set((state) => ({
+      members: state.members.map((m) =>
+        m.id === id
+          ? {
+              ...m,
+              display_name: params.display_name ?? m.display_name,
+              email: params.email ?? m.email,
+            }
+          : m,
+      ),
+    }));
   },
 }));

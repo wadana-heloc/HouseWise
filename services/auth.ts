@@ -78,6 +78,13 @@ export async function logout(): Promise<void> {
   }
 }
 
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await api.post('/auth/password-update', {
+    current_password: currentPassword,
+    new_password: newPassword,
+  });
+}
+
 export async function clearSession(): Promise<void> {
   await Promise.all([
     SecureStore.deleteItemAsync(TOKEN_KEYS.access),
