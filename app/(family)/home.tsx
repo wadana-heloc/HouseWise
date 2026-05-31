@@ -14,6 +14,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../store/authStore';
 import { useItemStore } from '../../store/itemStore';
+import { useLowStockStore } from '../../store/lowStockStore';
 import type { Item } from '../../services/items';
 
 function getGreeting(): string {
@@ -23,11 +24,6 @@ function getGreeting(): string {
   return 'Good evening';
 }
 
-const MOCK_LOW_STOCK = [
-  { id: '1', name: 'Laundry detergent', flaggedBy: 'Maha' },
-  { id: '2', name: 'Dish soap',         flaggedBy: 'Sara' },
-];
-
 export default function FamilyHomeScreen() {
   const router = useRouter();
   const { displayName, userId } = useAuthStore();
@@ -36,12 +32,14 @@ export default function FamilyHomeScreen() {
   const greeting = getGreeting();
 
   const { items, loading, fetchItems, updateStatus, deleteItem, addItem } = useItemStore();
+  const { flags, loading: flagsLoading, fetchFlags } = useLowStockStore();
   const [newItem, setNewItem]     = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
       fetchItems();
+      fetchFlags();
     }, []),
   );
 
@@ -261,25 +259,38 @@ export default function FamilyHomeScreen() {
         <View className="px-5 mt-6">
           <View className="flex-row items-center justify-between mb-3">
             <Text className="text-[12px] font-medium text-text-muted tracking-wider uppercase">
-              Low stock
+              Low stock {flags.length > 0 ? `(${flags.length})` : ''}
             </Text>
-            <TouchableOpacity onPress={() => router.push('/low-stock')}>
+            <TouchableOpacity onPress={() => router.push('/(family)/low-stock')}>
               <Text className="text-[13px] font-medium text-teal-600">Flag item</Text>
             </TouchableOpacity>
           </View>
           <View className="bg-white border border-border rounded-xl px-4">
-            {MOCK_LOW_STOCK.map((item, i) => (
-              <View
-                key={item.id}
-                className={`flex-row items-center gap-3 py-3 ${i < MOCK_LOW_STOCK.length - 1 ? 'border-b border-border' : ''}`}
-              >
-                <View className="w-2 h-2 rounded-full bg-amber-400" />
-                <Text className="flex-1 text-[14px] text-text-primary">{item.name}</Text>
-                <Text className="text-[12px] text-text-faint">
-                  {item.flaggedBy === name ? 'Flagged by you' : `Flagged by ${item.flaggedBy}`}
-                </Text>
+            {flagsLoading && (
+              <View className="py-4 items-center">
+                <ActivityIndicator size="small" color="#1D9E75" />
               </View>
-            ))}
+            )}
+            {!flagsLoading && flags.length === 0 && (
+              <View className="py-4 items-center">
+                <Text className="text-[13px] text-text-faint">All stocked up!</Text>
+              </View>
+            )}
+            {!flagsLoading && flags.slice(0, 3).map((flag, i) => {
+              const preview = flags.slice(0, 3);
+              return (
+                <View
+                  key={flag.id}
+                  className={`flex-row items-center gap-3 py-3 ${i < preview.length - 1 ? 'border-b border-border' : ''}`}
+                >
+                  <View className="w-2 h-2 rounded-full bg-amber-400" />
+                  <Text className="flex-1 text-[14px] text-text-primary" numberOfLines={1}>{flag.name}</Text>
+                  <Text className="text-[12px] text-text-faint">
+                    {flag.added_by === userId ? 'Flagged by you' : `Flagged by ${flag.added_by_display_name}`}
+                  </Text>
+                </View>
+              );
+            })}
           </View>
         </View>
 

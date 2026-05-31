@@ -5,17 +5,20 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useItemStore } from '../../store/itemStore';
+import { useLowStockStore } from '../../store/lowStockStore';
 
 const CATEGORIES = ['Dairy', 'Meat', 'Grains', 'Bakery', 'Pantry', 'Produce', 'Frozen', 'Drinks', 'Cleaning', 'Other'];
 const UNITS = ['units', 'kg', 'g', 'L', 'ml', 'packs', 'loaves', 'bottles', 'cans', 'bags'];
 
 export default function FamilyAddItemScreen() {
   const router = useRouter();
+  const { prefillName = '', lowStockFlagId = '' } = useLocalSearchParams<{ prefillName?: string; lowStockFlagId?: string }>();
   const addItem = useItemStore((s) => s.addItem);
+  const markOnList = useLowStockStore((s) => s.markOnList);
 
-  const [name, setName] = useState('');
+  const [name, setName] = useState(prefillName);
   const [qty, setQty] = useState('1');
   const [unit, setUnit] = useState('units');
   const [category, setCategory] = useState('');
@@ -44,10 +47,18 @@ export default function FamilyAddItemScreen() {
         urgent,
         notes: notes.trim() || undefined,
       });
-      Alert.alert('Item added', `"${name.trim()}" has been added to the list.`, [
-        { text: 'Add another', onPress: resetForm },
-        { text: 'Go to list', onPress: () => router.push('/(family)/list') },
-      ]);
+
+      if (lowStockFlagId) {
+        markOnList(lowStockFlagId);
+        Alert.alert('Added to list', `"${name.trim()}" has been added to the shopping list.`, [
+          { text: 'OK', onPress: () => router.back() },
+        ]);
+      } else {
+        Alert.alert('Item added', `"${name.trim()}" has been added to the list.`, [
+          { text: 'Add another', onPress: resetForm },
+          { text: 'Go to list', onPress: () => router.push('/(family)/list') },
+        ]);
+      }
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
       const msg = typeof detail === 'string'
@@ -65,7 +76,16 @@ export default function FamilyAddItemScreen() {
 
       {/* Header */}
       <View className="px-5 pt-4 pb-3 bg-white border-b border-border flex-row items-center justify-between">
-        <Text className="text-[22px] font-medium text-text-primary">Add item</Text>
+        {lowStockFlagId ? (
+          <View className="flex-row items-center gap-3">
+            <TouchableOpacity onPress={() => router.back()}>
+              <Ionicons name="arrow-back" size={22} color="#3D6B55" />
+            </TouchableOpacity>
+            <Text className="text-[22px] font-medium text-text-primary">Add to list</Text>
+          </View>
+        ) : (
+          <Text className="text-[22px] font-medium text-text-primary">Add item</Text>
+        )}
         <TouchableOpacity
           className="flex-row items-center gap-1.5"
           onPress={() => router.push('/barcode-confirm')}
@@ -89,7 +109,7 @@ export default function FamilyAddItemScreen() {
             placeholderTextColor="#A8C4B8"
             value={name}
             onChangeText={setName}
-            autoFocus
+            autoFocus={!prefillName}
           />
         </View>
 

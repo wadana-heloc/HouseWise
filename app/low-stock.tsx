@@ -1,40 +1,67 @@
-import { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, StatusBar, Alert } from 'react-native';
+import { useEffect, useState } from 'react';
+import {
+  View, Text, ScrollView, TouchableOpacity, TextInput,
+  StatusBar, Alert, ActivityIndicator,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-
-const INITIAL = [
-  { id: '1', name: 'Laundry detergent', flaggedBy: 'Maha',  flaggedAt: '2 hours ago',  onList: true  },
-  { id: '2', name: 'Dish soap',         flaggedBy: 'Ahmad', flaggedAt: '5 hours ago',  onList: true  },
-  { id: '3', name: 'Toilet paper',      flaggedBy: 'Sara',  flaggedAt: 'Yesterday',    onList: false },
-  { id: '4', name: 'Shampoo',           flaggedBy: 'Maha',  flaggedAt: 'Yesterday',    onList: false },
-];
+import { formatDistanceToNow } from 'date-fns';
+import { useLowStockStore } from '../store/lowStockStore';
 
 export default function LowStockScreen() {
   const router = useRouter();
-  const [items, setItems] = useState(INITIAL);
+  const { flags, onListFlagIds, loading, error, fetchFlags, addFlag, deleteFlag } = useLowStockStore();
   const [newItem, setNewItem] = useState('');
+  const [adding, setAdding] = useState(false);
 
-  function handleAdd() {
-    if (!newItem.trim()) return;
-    setItems((prev) => [
-      ...prev,
-      { id: Date.now().toString(), name: newItem.trim(), flaggedBy: 'Ahmad', flaggedAt: 'Just now', onList: false },
-    ]);
-    setNewItem('');
+  useEffect(() => {
+    fetchFlags();
+  }, []);
+
+  async function handleAdd() {
+    const name = newItem.trim();
+    if (!name) return;
+    setAdding(true);
+    try {
+      await addFlag(name);
+      setNewItem('');
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 409) {
+        Alert.alert('Already flagged', 'This item is already on the low-stock list.');
+      } else if (status === 422) {
+        Alert.alert('Invalid name', 'Item name must be between 1 and 120 characters.');
+      } else {
+        Alert.alert('Error', 'Failed to add flag. Please try again.');
+      }
+    } finally {
+      setAdding(false);
+    }
   }
 
-  function handleClear(id: string) {
-    Alert.alert('Clear flag', 'Mark this item as restocked?', [
+  function handleDelete(id: string, name: string) {
+    Alert.alert('Remove flag', `Remove "${name}" from low-stock?`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Clear', onPress: () => setItems((prev) => prev.filter((i) => i.id !== id)) },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteFlag(id);
+          } catch {
+            Alert.alert('Error', 'Failed to remove flag. Please try again.');
+          }
+        },
+      },
     ]);
   }
 
-  function handleAddToList(id: string) {
-    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, onList: true } : i)));
-    Alert.alert('Added', 'Item added to the shopping list.');
+  function handleAddToList(flagId: string, flagName: string) {
+    router.push({
+      pathname: '/(tabs)/add-item',
+      params: { prefillName: flagName, lowStockFlagId: flagId },
+    } as any);
   }
 
   return (
@@ -55,7 +82,7 @@ export default function LowStockScreen() {
         <View className="bg-amber-100 border border-amber-400/30 rounded-xl p-4 flex-row items-start gap-3">
           <Ionicons name="information-circle-outline" size={20} color="#92400E" />
           <Text className="flex-1 text-[13px] text-amber-800 leading-5">
-            Items flagged here are automatically added to the shopping list for the next purchase cycle.
+            Flag items running low. Tap "Add to list" to add them to the shopping list with details like quantity and unit.
           </Text>
         </View>
 
@@ -71,44 +98,82 @@ export default function LowStockScreen() {
               onChangeText={setNewItem}
               onSubmitEditing={handleAdd}
               returnKeyType="done"
+              editable={!adding}
             />
             <TouchableOpacity
-              className="bg-teal-600 rounded-xl px-4 items-center justify-center"
+              className={`rounded-xl px-4 items-center justify-center ${adding ? 'bg-teal-400' : 'bg-teal-600'}`}
               onPress={handleAdd}
               activeOpacity={0.85}
+              disabled={adding}
             >
-              <Ionicons name="add" size={22} color="#fff" />
+              {adding
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Ionicons name="add" size={22} color="#fff" />
+              }
             </TouchableOpacity>
           </View>
         </View>
 
         {/* List */}
         <View className="gap-2">
-          <Text className="text-[12px] font-medium text-text-muted uppercase tracking-wider">Flagged items ({items.length})</Text>
-          {items.map((item) => (
-            <View key={item.id} className="bg-white border border-border rounded-xl px-4 py-3 gap-2">
-              <View className="flex-row items-center gap-3">
-                <View className="w-2 h-2 rounded-full bg-amber-400" />
-                <Text className="flex-1 text-[14px] font-medium text-text-primary">{item.name}</Text>
-                <TouchableOpacity onPress={() => handleClear(item.id)}>
-                  <Ionicons name="close-circle-outline" size={20} color="#D6EDE5" />
-                </TouchableOpacity>
-              </View>
-              <View className="flex-row items-center justify-between pl-5">
-                <Text className="text-[12px] text-text-faint">Flagged by {item.flaggedBy} · {item.flaggedAt}</Text>
-                {item.onList ? (
-                  <View className="flex-row items-center gap-1">
-                    <Ionicons name="checkmark-circle" size={13} color="#1D9E75" />
-                    <Text className="text-[12px] text-teal-600">On list</Text>
-                  </View>
-                ) : (
-                  <TouchableOpacity onPress={() => handleAddToList(item.id)}>
-                    <Text className="text-[12px] font-medium text-teal-600">+ Add to list</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+          <Text className="text-[12px] font-medium text-text-muted uppercase tracking-wider">
+            Flagged items ({flags.length})
+          </Text>
+
+          {loading && (
+            <View className="py-8 items-center">
+              <ActivityIndicator size="small" color="#1D9E75" />
             </View>
-          ))}
+          )}
+
+          {!loading && error && (
+            <View className="bg-red-50 border border-red-200 rounded-xl p-4">
+              <Text className="text-[13px] text-red-700">{error}</Text>
+            </View>
+          )}
+
+          {!loading && !error && flags.length === 0 && (
+            <View className="bg-white border border-border rounded-xl p-6 items-center gap-2">
+              <Ionicons name="checkmark-circle-outline" size={32} color="#A8C4B8" />
+              <Text className="text-[14px] text-text-muted text-center">No items flagged. Everything looks stocked up!</Text>
+            </View>
+          )}
+
+          {flags.map((flag) => {
+            const isOnList = onListFlagIds.includes(flag.id);
+            return (
+              <View key={flag.id} className="bg-white border border-border rounded-xl px-4 py-3 gap-2">
+                <View className="flex-row items-center gap-3">
+                  <View className="w-2 h-2 rounded-full bg-amber-400" />
+                  <Text className="flex-1 text-[14px] font-medium text-text-primary">{flag.name}</Text>
+                  {/* Admin can delete any item */}
+                  <TouchableOpacity onPress={() => handleDelete(flag.id, flag.name)} hitSlop={8}>
+                    <Ionicons name="close-circle-outline" size={20} color="#94A3B8" />
+                  </TouchableOpacity>
+                </View>
+                <Text className="text-[12px] text-text-faint pl-5" numberOfLines={1}>
+                  Flagged by {flag.added_by_display_name} · {formatDistanceToNow(new Date(flag.created_at), { addSuffix: true })}
+                </Text>
+                <View className="pl-5 items-end">
+                  {isOnList ? (
+                    <View className="flex-row items-center gap-1">
+                      <Ionicons name="checkmark-circle" size={14} color="#1D9E75" />
+                      <Text className="text-[12px] text-teal-600">On list</Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      className="bg-teal-50 border border-teal-200 rounded-lg px-3 py-1.5"
+                      onPress={() => handleAddToList(flag.id, flag.name)}
+                      hitSlop={4}
+                      activeOpacity={0.75}
+                    >
+                      <Text className="text-[12px] font-semibold text-teal-700">+ Add to list</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            );
+          })}
         </View>
 
         <View style={{ height: 16 }} />
