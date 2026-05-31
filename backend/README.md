@@ -47,8 +47,11 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | GET    | `/household/members/{id}` | bearer | Fetch one member by id. Any household member may read any other in the same household. 404 cross-household. |
 | POST   | `/household/members` | bearer:admin | Create a family member with `{email, password, display_name}`. No invite email. Member can log in immediately. |
 | POST   | `/household/members/{id}/password` | bearer:admin | Admin resets a member's password directly. Does not invalidate the member's existing sessions. |
+| PATCH  | `/household/members/{id}` | bearer:admin | Admin updates a member's `display_name` and/or `email`. Email change is instant (no confirmation email). 400 on self-target (use `/me/profile`). |
 | DELETE | `/household/members/{id}` | bearer:admin | Remove a family member. |
-| GET    | `/me` | bearer | Current user + household snapshot. |
+| GET    | `/me` | bearer | Current user (incl. `health_preferences`) + household snapshot. |
+| PATCH  | `/me/profile` | bearer | Self-update `display_name` and/or `email`. Email change is instant (no confirmation email). |
+| PATCH  | `/me/health-preferences` | bearer | Partial update of the per-user dietary toggles (high_protein, low_calories, low_carbs, low_sugar, whole_grain). Unknown keys → 422. |
 | POST   | `/items` | bearer | Add an item to the caller's household. Server sets `status='pending'`, `added_by=caller`. |
 | GET    | `/items` | bearer | List items in the caller's household. Filters: `status`, `urgent`, `category`, `added_by`. |
 | GET    | `/items/{id}` | bearer | Fetch one item (404 cross-household). |
@@ -74,6 +77,7 @@ Run migrations in order in the Supabase SQL Editor:
 2. [supabase/migrations/0002_fix_rls_recursion.sql](../supabase/migrations/0002_fix_rls_recursion.sql) — replaces the self-referential `users` / `households` SELECT policies with a `SECURITY DEFINER` `current_household_id()` helper. Without it, any `SELECT` on `public.users` from an authenticated client throws `42P17 infinite recursion`.
 3. [supabase/migrations/0003_reset_and_simplify_auth.sql](../supabase/migrations/0003_reset_and_simplify_auth.sql) — **DESTRUCTIVE.** Wipes `public.households`, `public.users`, and `auth.users` (in that order — `households.admin_id` is `ON DELETE RESTRICT`). Then hardens `users_update_self` with a `with check` clause so a logged-in member cannot self-mutate `role` or `household_id` via direct PostgREST.
 4. [supabase/migrations/0004_init_items.sql](../supabase/migrations/0004_init_items.sql) — `public.items` table + `item_category` / `item_unit` / `item_status` enums + GRANTs + same-household SELECT RLS + `updated_at` trigger.
+5. [supabase/migrations/0005_user_profile_and_health_prefs.sql](../supabase/migrations/0005_user_profile_and_health_prefs.sql) — adds `public.users.health_preferences jsonb not null default '{}'::jsonb`. Application-level schema in [backend/app/me/schemas.py](app/me/schemas.py) pins the known toggle keys.
 
 0001 creates:
 - `public.households`, `public.users` with FKs into `auth.users`

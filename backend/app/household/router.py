@@ -11,6 +11,7 @@ from .schemas import (
     CreateMemberResponse,
     MemberListResponse,
     MemberRow,
+    UpdateMemberRequest,
 )
 
 router = APIRouter(prefix="/household/members", tags=["household"])
@@ -209,6 +210,86 @@ def admin_reset_member_password(
     # Outstanding sessions remain usable until natural expiry.
     sb.auth.admin.update_user_by_id(member_id, {"password": body.new_password})
     return OkResponse()
+
+
+@router.patch(
+    "/{member_id}",
+    response_model=MemberRow,
+    summary="Admin updates a member's name or email",
+)
+def update_member(
+    member_id: UUID,
+    body: UpdateMemberRequest,
+    admin: CurrentUser = Depends(require_role("admin")),
+):
+    """Admin patches a family member's `display_name` and/or `email`.
+
+    Email changes are applied with `email_confirm=True`, so Supabase does
+    not send a verification email — the new address is usable immediately
+    (consistent with v2 "no email-link flows except admin password reset").
+    Both `auth.users` and `public.users` are updated.
+
+    Admins changing their **own** name/email use
+    `PATCH /me/profile`, not this endpoint (400 if `member_id` equals the
+    caller's id). Health preferences are strictly self-managed; this
+    endpoint cannot edit them.
+
+    Errors: 400 caller targeted themselves. 403 caller is not an admin.
+    404 member not found or not in caller's household. 409 the new email is
+    already registered. 422 empty body, malformed email, or `member_id` is
+    not a UUID.
+    """
+    sb = get_supabase()
+    household_id = _admin_household_id(sb, admin.id)
+    member_id_str = str(member_id)
+
+    if member_id_str == admin.id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Admins use /me/profile for their own profile",
+        )
+
+    member = (
+        sb.table("users")
+        .select("id, household_id")
+        .eq("id", member_id_str)
+        .eq("household_id", household_id)
+        .execute()
+    )
+    if not member.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Member not in your household")
+
+    patch: dict = {}
+    if body.email is not None:
+        try:
+            sb.auth.admin.update_user_by_id(
+                member_id_str,
+                {"email": body.email, "email_confirm": True},
+            )
+        except Exception as e:
+            msg = str(e).lower()
+            if "already" in msg or "registered" in msg or "exists" in msg:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"Email update failed: {e}",
+            )
+        patch["email"] = body.email
+
+    if body.display_name is not None:
+        patch["display_name"] = body.display_name
+
+    if patch:
+        sb.table("users").update(patch).eq("id", member_id_str).execute()
+
+    confirm = (
+        sb.table("users")
+        .select("id, email, display_name, role")
+        .eq("id", member_id_str)
+        .single()
+        .execute()
+    )
+    return confirm.data
 
 
 @router.delete(

@@ -196,6 +196,101 @@ def test_family_cannot_create_or_delete_members(client, created_users):
     assert me_resp.status_code == 200
 
 
+# ---------- Admin patches member name/email ----------
+
+def test_admin_patches_member_display_name(client, sb, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users, display_name="Old")
+    r = client.patch(
+        f"/household/members/{member['user_id']}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"display_name": "Renamed"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["display_name"] == "Renamed"
+    row = sb.table("users").select("display_name").eq("id", member["user_id"]).single().execute().data
+    assert row["display_name"] == "Renamed"
+
+
+def test_admin_patches_member_email_login_swaps(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    new_email = unique_email()
+
+    r = client.patch(
+        f"/household/members/{member['user_id']}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"email": new_email},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["email"] == new_email
+
+    old = client.post("/auth/login", json={"email": member["email"], "password": member["password"]})
+    assert old.status_code == 401
+    new = client.post("/auth/login", json={"email": new_email, "password": member["password"]})
+    assert new.status_code == 200
+
+
+def test_admin_cannot_patch_member_in_other_household(client, created_users):
+    a1 = _signup_admin(client, created_users, household_name="H1")
+    a2 = _signup_admin(client, created_users, household_name="H2")
+    m1 = _create_member(client, a1["access_token"], created_users)
+    r = client.patch(
+        f"/household/members/{m1['user_id']}",
+        headers={"Authorization": f"Bearer {a2['access_token']}"},
+        json={"display_name": "X"},
+    )
+    assert r.status_code == 404
+
+
+def test_admin_cannot_patch_self_via_member_endpoint(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = client.patch(
+        f"/household/members/{admin['user_id']}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"display_name": "X"},
+    )
+    assert r.status_code == 400
+
+
+def test_admin_patch_member_email_conflict_returns_409(client, created_users):
+    a1 = _signup_admin(client, created_users, household_name="H1")
+    a2 = _signup_admin(client, created_users, household_name="H2")
+    m2 = _create_member(client, a2["access_token"], created_users)
+    r = client.patch(
+        f"/household/members/{m2['user_id']}",
+        headers={"Authorization": f"Bearer {a2['access_token']}"},
+        json={"email": a1["email"]},
+    )
+    assert r.status_code == 409
+
+
+def test_family_cannot_patch_other_member(client, created_users):
+    admin = _signup_admin(client, created_users)
+    m1 = _create_member(client, admin["access_token"], created_users)
+    m2 = _create_member(client, admin["access_token"], created_users)
+    fam_token = client.post(
+        "/auth/login",
+        json={"email": m1["email"], "password": m1["password"]},
+    ).json()["access_token"]
+    r = client.patch(
+        f"/household/members/{m2['user_id']}",
+        headers={"Authorization": f"Bearer {fam_token}"},
+        json={"display_name": "Nope"},
+    )
+    assert r.status_code == 403
+
+
+def test_admin_patch_member_non_uuid_returns_422(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = client.patch(
+        "/household/members/not-a-uuid",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"display_name": "X"},
+    )
+    assert r.status_code == 422
+
+
 # ---------- Member reads (admin + family) ----------
 
 def test_admin_lists_members_includes_self_and_family(client, created_users):
