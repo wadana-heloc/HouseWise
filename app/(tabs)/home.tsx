@@ -202,7 +202,7 @@ export default function HomeScreen() {
                                         {item.name}
                                     </Text>
                                     <Text className="text-[12px] text-text-faint mt-0.5">
-                                        {isOwn ? 'You' : 'Member'} · {item.quantity} {item.unit}
+                                        {isOwn ? 'You' : (members.find((m) => m.id === item.added_by)?.display_name ?? 'Member')} · {item.quantity} {item.unit}
                                     </Text>
                                 </View>
 

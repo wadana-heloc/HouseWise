@@ -9,6 +9,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { format, isToday, isYesterday } from 'date-fns';
 import { useItemStore } from '../../store/itemStore';
 import { useAuthStore } from '../../store/authStore';
+import { useMemberStore } from '../../store/memberStore';
 import type { Item } from '../../services/items';
 
 const FILTERS = ['All', 'Urgent', 'Done'];
@@ -30,6 +31,7 @@ export default function ListScreen() {
   const { items, loading, error, fetchItems, deleteItem, updateStatus } = useItemStore();
   const { role, userId } = useAuthStore();
   const isAdmin = role === 'admin';
+  const { members, fetchMembers } = useMemberStore();
 
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('All');
@@ -37,6 +39,7 @@ export default function ListScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchItems();
+      fetchMembers();
     }, []),
   );
 
@@ -255,7 +258,7 @@ export default function ListScreen() {
                 </View>
 
                 <Text className="text-[12px] text-text-faint mt-0.5">
-                  {isOwn ? 'You' : 'Member'} · {item.quantity} {item.unit} · {capitalize(item.category)}
+                  {isOwn ? 'You' : (members.find((m) => m.id === item.added_by)?.display_name ?? 'Member')} · {item.quantity} {item.unit} · {capitalize(item.category)}
                 </Text>
                 <Text className="text-[11px] text-text-faint mt-0.5">
                   {formatDate(item.created_at)}

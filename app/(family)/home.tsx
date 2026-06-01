@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../store/authStore';
 import { useItemStore } from '../../store/itemStore';
 import { useLowStockStore } from '../../store/lowStockStore';
+import { useMemberStore } from '../../store/memberStore';
 import type { Item } from '../../services/items';
 
 function getGreeting(): string {
@@ -33,6 +34,7 @@ export default function FamilyHomeScreen() {
 
   const { items, loading, fetchItems, updateStatus, deleteItem, addItem } = useItemStore();
   const { flags, loading: flagsLoading, fetchFlags } = useLowStockStore();
+  const { members, fetchMembers } = useMemberStore();
   const [newItem, setNewItem]     = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -40,6 +42,7 @@ export default function FamilyHomeScreen() {
     useCallback(() => {
       fetchItems();
       fetchFlags();
+      fetchMembers();
     }, []),
   );
 
@@ -224,7 +227,7 @@ export default function FamilyHomeScreen() {
                     {item.name}
                   </Text>
                   <Text className="text-[12px] text-text-faint mt-0.5">
-                    {isOwn ? 'You' : 'Member'} · {item.quantity} {item.unit}
+                    {isOwn ? 'You' : (members.find((m) => m.id === item.added_by)?.display_name ?? 'Member')} · {item.quantity} {item.unit}
                   </Text>
                 </View>
 

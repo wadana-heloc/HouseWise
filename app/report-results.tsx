@@ -7,10 +7,12 @@ import {
   StatusBar,
   Alert,
   Linking,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { sendReportEmail } from '../services/report';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type StoreOption = {
@@ -136,6 +138,7 @@ function buildWhatsAppMessage(items: ReportItem[]): string {
 export default function ReportResultsScreen() {
   const router = useRouter();
   const [items, setItems] = useState<ReportItem[]>(MOCK_RESULTS);
+  const [isSending, setIsSending] = useState(false);
 
   const selectedCount = items.filter((i) => i.selectedOption !== null).length;
   const allSelected   = selectedCount === items.length;
@@ -195,8 +198,53 @@ export default function ReportResultsScreen() {
         {
           text: 'Confirm & Send',
           onPress: () => {
-            // TODO: POST /reports/{id}/approve with selected options
             handleSendWhatsApp();
+          },
+        },
+      ]
+    );
+  }
+
+  async function handleSendEmail() {
+    if (!allSelected) {
+      Alert.alert(
+        'Incomplete selections',
+        `Please select an option for all ${items.length} items before sending.`
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Send to Admin',
+      `Send the shopping report (AED ${grandTotal.toFixed(2)}) to the household admin?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Send',
+          onPress: async () => {
+            setIsSending(true);
+            try {
+              const confirmed = items.filter((i) => i.selectedOption !== null);
+              await sendReportEmail({
+                items: confirmed.map((i) => ({
+                  itemName: i.itemName,
+                  qty: i.qty,
+                  unit: i.unit,
+                  requestedBy: i.requestedBy,
+                  selectedOption: i.selectedOption!,
+                })),
+                grandTotal,
+              });
+              Alert.alert(
+                'Report sent!',
+                'The shopping report has been emailed to the admin.',
+                [{ text: 'OK', onPress: () => router.back() }]
+              );
+            } catch {
+              Alert.alert('Failed to send', 'Could not send the report. Please try again.');
+            } finally {
+              setIsSending(false);
+            }
           },
         },
       ]
@@ -349,28 +397,51 @@ export default function ReportResultsScreen() {
             </Text>
           </View>
         )}
+
+        {/* Primary: Send to admin email */}
         <TouchableOpacity
           className={`rounded-xl py-4 flex-row items-center justify-center gap-2 ${
-            allSelected ? 'bg-teal-600' : 'bg-teal-50'
+            allSelected && !isSending ? 'bg-teal-600' : 'bg-teal-50'
           }`}
-          onPress={handleConfirmReport}
+          onPress={handleSendEmail}
+          disabled={isSending}
           activeOpacity={0.85}
         >
-          <Ionicons
-            name="logo-whatsapp"
-            size={20}
-            color={allSelected ? '#fff' : '#A8C4B8'}
-          />
+          {isSending ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Ionicons
+              name="mail"
+              size={20}
+              color={allSelected ? '#fff' : '#A8C4B8'}
+            />
+          )}
           <Text
             className={`text-[16px] font-semibold ${
-              allSelected ? 'text-white' : 'text-text-faint'
+              allSelected && !isSending ? 'text-white' : 'text-text-faint'
             }`}
           >
-            {allSelected
-              ? 'Confirm & send via WhatsApp'
+            {isSending
+              ? 'Sending...'
+              : allSelected
+              ? 'Send to Admin'
               : `Select ${items.length - selectedCount} more item${items.length - selectedCount !== 1 ? 's' : ''}`}
           </Text>
         </TouchableOpacity>
+
+        {/* Secondary: WhatsApp */}
+        {allSelected && (
+          <TouchableOpacity
+            className="rounded-xl py-3 flex-row items-center justify-center gap-2 border border-teal-200"
+            onPress={handleConfirmReport}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="logo-whatsapp" size={18} color="#1D9E75" />
+            <Text className="text-[14px] font-medium text-teal-600">
+              Share via WhatsApp
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
     </SafeAreaView>
   );
