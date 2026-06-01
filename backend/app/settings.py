@@ -14,5 +14,7 @@ class Settings(BaseSettings):
 
     APP_DEEP_LINK: str = Field(default="myapp://auth/callback")
 
+    ANTHROPIC_API_KEY: str
+
 
 settings = Settings()

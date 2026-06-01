@@ -15,6 +15,25 @@ ItemUnit = Literal[
 
 ItemStatus = Literal["pending", "in_review", "approved", "rejected", "done"]
 
+# Max length of the base64-encoded image POSTed to /items/scan-image.
+# 7_500_000 chars ≈ a 5 MB image after base64 (1.37x expansion). Bump here
+# if the mobile client starts sending larger photos.
+SCAN_IMAGE_MAX_BASE64 = 7_500_000
+
+ScanMediaType = Literal["image/jpeg", "image/png", "image/webp", "image/gif"]
+
+
+class ScanImageRequest(BaseModel):
+    image_base64: str = Field(min_length=1, max_length=SCAN_IMAGE_MAX_BASE64)
+    media_type: ScanMediaType
+
+
+class ProductScanResponse(BaseModel):
+    name: Optional[str]
+    brand: Optional[str]
+    size: Optional[str]
+    reason: Optional[str]
+
 
 class ItemCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)

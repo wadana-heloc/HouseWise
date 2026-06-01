@@ -250,6 +250,7 @@ All paths under `/auth`. Public = no token required. Auth = bearer required.
 | GET    | `/stores`                           | bearer       | List the caller's household stores, alphabetical. Any household member may read.                       |
 | PATCH  | `/stores/{store_id}`                | bearer:admin | Update `name` and/or `url`. Same uniqueness + URL rules as POST. 404 cross-household.                  |
 | DELETE | `/stores/{store_id}`                | bearer:admin | Remove a store. 404 cross-household.                                                                   |
+| POST   | `/items/scan-image`                 | bearer       | Pass-through to the image-analysis agent (EasyOCR + Claude). Returns `{name, brand, size, reason}` — does not persist. Always 200; failures live in `reason`. |
 
 Refresh is handled by the Supabase JS SDK on the client — there is no `/auth/refresh` endpoint on the backend.
 

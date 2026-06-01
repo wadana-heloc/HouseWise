@@ -12,12 +12,15 @@ FastAPI + Supabase. Owns auth, households, and family-member membership.
 
 ```powershell
 cd backend
-python -m venv .venv
+# Use 64-bit Python — easyocr requires torch, which has no 32-bit Windows wheels.
+py -3.12 -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env   # then fill in values
+pip install -e ".[dev]"          # installs runtime + dev (pytest, ruff, mypy)
+copy .env.example .env           # then fill in values
 uvicorn app.main:app --reload
 ```
+
+Dependencies are declared in [pyproject.toml](pyproject.toml). The `[dev]` extra pulls test/lint/typecheck tools — drop it in production deploys (`pip install -e .`).
 
 ## Environment variables
 
@@ -32,6 +35,7 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | `SUPABASE_JWT_ISSUER` | `https://<ref>.supabase.co/auth/v1` |
 | `SUPABASE_JWT_AUDIENCE` | `authenticated` |
 | `APP_DEEP_LINK` | `redirect_to` for the **admin** password-reset email. Only remaining email-link flow. Must be allow-listed in Supabase Dashboard → Auth → URL Configuration. |
+| `ANTHROPIC_API_KEY` | Used by the image-analysis agent at [ai_agents/image-agent/](../ai_agents/image-agent/) for `POST /items/scan-image`. Required at startup. |
 
 ## Endpoints
 
@@ -58,6 +62,7 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | PATCH  | `/items/{id}` | bearer | Update any non-status field. Empty body → 422. |
 | POST   | `/items/{id}/status` | bearer | Transition `status`. Family may set `done` or undo `done→pending`; admin only for `in_review`/`approved`/`rejected` and reopening `rejected→pending`. |
 | DELETE | `/items/{id}` | bearer | Delete. Creator or any admin in the household. |
+| POST   | `/items/scan-image` | bearer | Run a product photo through the image-analysis agent. Pass-through — does not persist. Always 200; failures live in `reason`. |
 | POST   | `/low-stock` | bearer | Flag an item as running low. 409 if the name is already flagged in this household (any member). |
 | GET    | `/low-stock` | bearer | List the caller's household flags, newest first. Each row includes `added_by_display_name`. |
 | DELETE | `/low-stock/{flag_id}` | bearer | Clear a flag. Any household member may delete any flag. |
@@ -68,6 +73,7 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | GET    | `/health` | public | Liveness. |
 
 Items flow + state machine + permission matrix: [docs/items-flow.md](../docs/items-flow.md).
+Image-scan endpoint (pass-through to the AI agent): [docs/scan-image-flow.md](../docs/scan-image-flow.md).
 Low-stock flags (per-household, name-unique): [docs/low-stock-flow.md](../docs/low-stock-flow.md).
 Stores (admin-managed, family-readable): [docs/stores-flow.md](../docs/stores-flow.md).
 Profile + health-preferences flow: [docs/profile-flow.md](../docs/profile-flow.md).
@@ -105,7 +111,7 @@ Integration tests hit a **real Supabase project**. No DB mocking — see [CLAUDE
 
 ```powershell
 cd backend
-pip install -r requirements.txt
+pip install -e ".[dev]"
 # In .env, set TEST_SUPABASE_URL / TEST_SUPABASE_SERVICE_ROLE_KEY /
 # TEST_SUPABASE_JWKS_URL / TEST_SUPABASE_JWT_ISSUER.
 pytest

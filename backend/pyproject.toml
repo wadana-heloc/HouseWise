@@ -1,21 +1,22 @@
 [project]
-name = "mathquest-backend"
+name = "housewise-backend"
 version = "0.1.0"
-description = "MathQuest FastAPI backend — auth, gameplay, and parent controls."
+description = "HouseWise FastAPI backend — household, items, low-stock, stores, profile, scan."
 requires-python = ">=3.11"
 readme = "README.md"
 dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
-    "pydantic[email]>=2.9.0",
-    "pydantic-settings>=2.5.0",
-    "supabase>=2.9.0",
-    "gotrue>=2.9.0",
-    "python-jose[cryptography]>=3.3.0",
-    "httpx>=0.27.0",
-    # AI pipeline dependencies — needed for direct Python imports of
-    # problem_recommender, difficulty_adjuster, and orchestrator.
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.32,<1.0",
+    "pydantic[email]>=2.9,<3.0",
+    "pydantic-settings>=2.5,<3.0",
+    "supabase>=2.9,<3.0",
+    "gotrue>=2.9,<3.0",
+    "python-jose[cryptography]>=3.3,<4.0",
+    "pyjwt>=2.8,<3.0",
+    "httpx>=0.27,<1.0",
+    # AI agents (ai_agents/image-agent/) — runtime deps for POST /items/scan-image.
     "anthropic>=0.40.0",
+    "easyocr>=1.7.0",
     "python-dotenv>=1.0.0",
 ]
 

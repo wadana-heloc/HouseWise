@@ -2,6 +2,8 @@
 
 Household shopping/inventory list. One row per item per household. Source of truth for fields, enums, and permissions is [supabase/migrations/0004_init_items.sql](../supabase/migrations/0004_init_items.sql) and [backend/app/items/router.py](../backend/app/items/router.py).
 
+Adding an item from a product photo is a **separate pass-through endpoint** that does not persist — the mobile client gets back `{name, brand, size}`, the user confirms, then a normal `POST /items` actually creates the row. See [docs/scan-image-flow.md](scan-image-flow.md).
+
 ---
 
 ## Resource

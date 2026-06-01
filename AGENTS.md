@@ -37,7 +37,7 @@ Python 3.11+. PowerShell on the dev machine.
 ```
 backend/
   app/
-    main.py            # FastAPI app + router wiring
+    main.py            # FastAPI app + router wiring + sys.path shim for ai_agents/image-agent + lifespan EasyOCR warmup
     settings.py        # Settings(BaseSettings) — env loading
     supabase_client.py # singleton service-role client
     logging_setup.py   # token-redacting log filter
@@ -67,10 +67,9 @@ backend/
     test_low_stock.py  # low-stock flag CRUD + uniqueness
     test_me.py         # self profile updates + health preferences
     test_stores.py     # stores CRUD + URL normalization + uniqueness
-  requirements.txt
+  pyproject.toml       # runtime + dev deps + ruff/mypy/pytest config (single source of truth)
   .env.example         # template
   .env                 # local-only, gitignored
-  pytest.ini
   README.md
 
 supabase/
@@ -88,7 +87,13 @@ docs/
   items-flow.md        # items endpoints, permission matrix, status state machine
   low-stock-flow.md    # low-stock flags, uniqueness, open-delete rule
   profile-flow.md      # self profile + health-preferences + admin member-patch
+  scan-image-flow.md   # POST /items/scan-image pass-through to the image agent
   stores-flow.md       # stores CRUD, URL normalization, admin/family permission split
+
+ai_agents/             # ↑ NOT under backend/. Independent Python files owned by the AI team.
+  image-agent/         # Hyphenated folder; backend's main.py adds this to sys.path on boot.
+    image_agent.py     # analyze_product_image() — called by POST /items/scan-image
+    BACKEND_CONTRACT.md
 ```
 
 ---
@@ -97,10 +102,10 @@ docs/
 
 ```powershell
 cd backend
-python -m venv .venv
+py -3.12 -m venv .venv                # must be 64-bit Python (easyocr -> torch)
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env   # then edit .env with real Supabase values
+pip install -e ".[dev]"               # runtime + dev deps from pyproject.toml
+copy .env.example .env                # then edit .env with real Supabase values
 uvicorn app.main:app --reload
 ```
 
@@ -131,6 +136,14 @@ These come from prior incidents (see [CLAUDE.md §7](CLAUDE.md) and [spec §9](n
 8. **Never log tokens.** `TokenRedactingFilter` is installed globally — don't bypass it with `print()` or by formatting tokens into log messages yourself.
 
 If you find existing code that violates one of these, **flag it; do not silently work around it.**
+
+---
+
+## Image-scan endpoint: pass-through only (don't add persistence)
+
+`POST /items/scan-image` is deliberately a **pure pass-through** to the agent in [ai_agents/image-agent/](ai_agents/image-agent/). It must never write to `public.items`, never log scanned content, never store the image. The user reviews the agent's result on the mobile confirmation screen and then calls `POST /items` separately to actually save. Coupling scan + create here would skip that confirmation step and break the UX the contract assumes.
+
+The handler is also responsible for catching `ImportError` and returning **503** rather than crashing — the rest of the API must boot even if `ai_agents/image-agent/` isn't checked out (e.g. partial deployments). See [docs/scan-image-flow.md](docs/scan-image-flow.md).
 
 ---
 

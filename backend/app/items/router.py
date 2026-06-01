@@ -2,6 +2,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from starlette.concurrency import run_in_threadpool
 
 from ..auth.deps import CurrentUser, current_user
 from ..auth.schemas import OkResponse
@@ -14,6 +15,8 @@ from .schemas import (
     ItemStatus,
     ItemStatusUpdate,
     ItemUpdate,
+    ProductScanResponse,
+    ScanImageRequest,
 )
 
 router = APIRouter(prefix="/items", tags=["items"])
@@ -281,3 +284,53 @@ def delete_item(item_id: UUID, user: CurrentUser = Depends(current_user)):
 
     sb.table("items").delete().eq("id", item_id_str).execute()
     return OkResponse()
+
+
+@router.post(
+    "/scan-image",
+    response_model=ProductScanResponse,
+    summary="Extract name/brand/size from a product photo",
+)
+async def scan_image(
+    body: ScanImageRequest,
+    user: CurrentUser = Depends(current_user),
+):
+    """Run a product photo through the image-analysis agent.
+
+    Pass-through: the backend forwards `image_base64` + `media_type` to the
+    agent (EasyOCR + Claude under the hood) and returns the structured
+    result. **Nothing is persisted** — the user reviews `name`/`brand`/`size`
+    on the mobile confirmation form, then calls `POST /items` separately
+    to save.
+
+    `reason` is `null` when at least partial extraction succeeded. When the
+    image is unreadable or the agent hit an error, `reason` is a short
+    description string and `name`/`brand`/`size` are all `null`. The HTTP
+    status is **always 200** in those cases — the failure shape lives in the
+    response body, per the agent contract.
+
+    Errors: 401 missing/invalid bearer. 403 caller is not in a household.
+    422 `image_base64` empty or larger than `SCAN_IMAGE_MAX_BASE64`, or
+    `media_type` is not one of `image/jpeg`/`png`/`webp`/`gif`. 503 the
+    image agent is not available in this deployment.
+    """
+    sb = get_supabase()
+    _user_household(sb, user.id)
+
+    try:
+        from image_agent import analyze_product_image
+    except ImportError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Image-analysis agent is not available in this deployment",
+        )
+
+    result = await run_in_threadpool(
+        analyze_product_image, body.image_base64, body.media_type,
+    )
+    return ProductScanResponse(
+        name=result.name,
+        brand=result.brand,
+        size=result.size,
+        reason=result.reason,
+    )
