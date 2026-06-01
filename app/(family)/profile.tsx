@@ -18,7 +18,7 @@ const MENU_SECTIONS = [
   {
     title: 'Account',
     items: [
-      { icon: 'lock-closed-outline', label: 'Change password', route: '/settings' },
+      { icon: 'lock-closed-outline', label: 'Change password', route: '/profile' },
     ],
   },
 ];

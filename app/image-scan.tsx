@@ -7,127 +7,50 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
 import { useItemStore } from '../store/itemStore';
-
-const OFF_API_URL = process.env.EXPO_PUBLIC_OFF_API_URL ?? 'https://world.openfoodfacts.org/api/v3';
+import { scanImage } from '../services/items';
 
 const UNITS = ['units', 'kg', 'g', 'L', 'ml', 'packs', 'loaves', 'bottles', 'cans', 'bags'];
 const CATEGORIES = ['Dairy', 'Meat', 'Grains', 'Bakery', 'Pantry', 'Produce', 'Frozen', 'Drinks', 'Cleaning', 'Other'];
+const ACCEPTED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
-type Stage = 'scanning' | 'found' | 'not-found';
+type Stage = 'capture' | 'found' | 'not-found';
+type CaptureMode = 'camera' | 'gallery';
 
-interface Product {
-  name: string;
-  brand: string;
-  size: string;
-  barcode: string;
-  displayCategory: string;
-  categoryKey: string;
-  image: string | null;
+interface ScannedProduct {
+  name: string | null;
+  brand: string | null;
+  size: string | null;
 }
 
-function formatCategory(tags: string[] | undefined): string {
-  const tag = tags?.[0];
-  if (!tag) return 'Other';
-  return tag
-    .replace(/^[a-z]+:/, '')
-    .split('-')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
+function resolveMediaType(mimeType?: string | null): string {
+  if (mimeType && ACCEPTED_MIME_TYPES.has(mimeType)) return mimeType;
+  return 'image/jpeg';
 }
 
-function mapCategory(tags: string[] | undefined): string {
-  if (!tags?.length) return 'other';
-  const keywords: [string, string][] = [
-    ['dairy', 'dairy'], ['milk', 'dairy'], ['cheese', 'dairy'], ['yogurt', 'dairy'], ['butter', 'dairy'],
-    ['meat', 'meat'], ['chicken', 'meat'], ['poultry', 'meat'], ['beef', 'meat'], ['seafood', 'meat'], ['fish', 'meat'], ['lamb', 'meat'],
-    ['bread', 'bakery'], ['bakery', 'bakery'], ['pastry', 'bakery'],
-    ['cereal', 'grains'], ['grain', 'grains'], ['rice', 'grains'], ['pasta', 'grains'], ['flour', 'grains'],
-    ['beverage', 'drinks'], ['drink', 'drinks'], ['juice', 'drinks'], ['water', 'drinks'], ['soda', 'drinks'], ['coffee', 'drinks'], ['tea', 'drinks'],
-    ['frozen', 'frozen'],
-    ['vegetable', 'produce'], ['fruit', 'produce'],
-    ['cleaning', 'cleaning'], ['household', 'cleaning'], ['detergent', 'cleaning'],
-    ['snack', 'pantry'], ['sauce', 'pantry'], ['condiment', 'pantry'], ['oil', 'pantry'], ['canned', 'pantry'], ['bean', 'pantry'], ['legume', 'pantry'],
-  ];
-  for (const tag of tags) {
-    const lower = tag.toLowerCase().replace(/^[a-z]+:/, '');
-    for (const [keyword, category] of keywords) {
-      if (lower.includes(keyword)) return category;
-    }
+async function uriToBase64(uri: string): Promise<string> {
+  const response = await fetch(uri);
+  const buffer = await response.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
   }
-  return 'other';
+  return btoa(binary);
 }
 
-function parseQuantity(raw: string): { qty: string; unit: string } {
-  const match = raw.trim().match(/^([\d.]+)\s*([a-zA-Z]+)?/);
-  if (!match) return { qty: '1', unit: 'units' };
-  const qty = match[1];
-  const rawUnit = (match[2] || '').toLowerCase();
-  const unitMap: Record<string, string> = {
-    g: 'g', gr: 'g', gram: 'g', grams: 'g',
-    kg: 'kg',
-    l: 'L', liter: 'L', litre: 'L', liters: 'L', litres: 'L',
-    ml: 'ml', milliliter: 'ml', millilitre: 'ml',
-    pack: 'packs', packs: 'packs',
-    bottle: 'bottles', bottles: 'bottles',
-    can: 'cans', cans: 'cans',
-    bag: 'bags', bags: 'bags',
-  };
-  return { qty, unit: unitMap[rawUnit] || 'units' };
-}
-
-async function lookupBarcode(barcode: string): Promise<{ product: Product; rawTags: string[] } | null> {
-  try {
-    const url = `${OFF_API_URL}/product/${barcode}`;
-    console.log('\n========== Barcode Scan ==========');
-    console.log('Barcode:', barcode);
-    console.log('Fetching:', url);
-
-    const res = await fetch(url);
-    const data = await res.json();
-
-    if (data.result?.id !== 'product_found' || !data.product) {
-      console.log('Product not found in Open Food Facts');
-      console.log('API result:', data.result?.id ?? 'no result field');
-      console.log('==================================\n');
-      return null;
-    }
-
-    const p = data.product;
-    const rawTags: string[] = p.categories_tags ?? [];
-    const product: Product = {
-      name: p.product_name_en || p.product_name || 'Unknown product',
-      brand: p.brands?.split(',')[0]?.trim() || p.brand_owner?.split(',')[0]?.trim() || '',
-      size: p.quantity || '',
-      barcode,
-      displayCategory: formatCategory(rawTags),
-      categoryKey: mapCategory(rawTags),
-      image: p.image_url || null,
-    };
-
-    console.log('Name:    ', product.name);
-    console.log('Brand:   ', product.brand);
-    console.log('Size:    ', product.size);
-    console.log('Category:', product.displayCategory, `(→ ${product.categoryKey})`);
-    console.log('==================================\n');
-
-    return { product, rawTags };
-  } catch (err) {
-    console.error('Barcode lookup error:', err);
-    return null;
-  }
-}
-
-export default function BarcodeScanScreen() {
+export default function ImageScanScreen() {
   const router = useRouter();
   const addItem = useItemStore((s) => s.addItem);
 
-  const [stage, setStage] = useState<Stage>('scanning');
+  const [stage, setStage] = useState<Stage>('capture');
+  const [captureMode, setCaptureMode] = useState<CaptureMode>('camera');
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [product, setProduct] = useState<Product | null>(null);
+  const [product, setProduct] = useState<ScannedProduct | null>(null);
+  const [failReason, setFailReason] = useState<string | null>(null);
 
-  // Form state — pre-filled from API on scan
   const [name, setName] = useState('');
   const [qty, setQty] = useState('1');
   const [unit, setUnit] = useState('units');
@@ -136,34 +59,70 @@ export default function BarcodeScanScreen() {
   const [notes, setNotes] = useState('');
 
   const [permission, requestPermission] = useCameraPermissions();
-  const scannedRef = useRef(false);
+  const cameraRef = useRef<CameraView>(null);
 
-  async function handleBarcodeScanned({ data }: { data: string }) {
-    if (scannedRef.current || loading) return;
-    scannedRef.current = true;
+  async function processImage(base64: string, mimeType?: string | null) {
     setLoading(true);
-
-    const result = await lookupBarcode(data);
-    setLoading(false);
-
-    if (result) {
-      const { product: found } = result;
-      const { qty: parsedQty, unit: parsedUnit } = parseQuantity(found.size);
-      setProduct(found);
-      setName(found.name);
-      setQty(parsedQty);
-      setUnit(parsedUnit);
-      setCategory(found.categoryKey);
-      setStage('found');
-    } else {
-      setStage('not-found');
+    try {
+      const result = await scanImage(base64, resolveMediaType(mimeType));
+      if (result.reason !== null) {
+        setFailReason(result.reason);
+        setStage('not-found');
+      } else {
+        setProduct({ name: result.name, brand: result.brand, size: result.size });
+        setName(result.name ?? '');
+        setStage('found');
+      }
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 503) {
+        Alert.alert('Service unavailable', 'Image scanning is not available right now.');
+      } else if (status === 422) {
+        Alert.alert('Invalid image', 'The image is too large or in an unsupported format.');
+      } else {
+        Alert.alert('Error', 'Could not scan image. Please try again.');
+      }
+    } finally {
+      setLoading(false);
     }
   }
 
-  function resetScan() {
-    scannedRef.current = false;
-    setStage('scanning');
+  async function handleTakePhoto() {
+    if (!cameraRef.current) return;
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.75 });
+      if (!photo?.base64) {
+        Alert.alert('Error', 'Could not capture photo. Try again.');
+        return;
+      }
+      await processImage(photo.base64, 'image/jpeg');
+    } catch {
+      Alert.alert('Error', 'Could not capture photo. Try again.');
+    }
+  }
+
+  async function handlePickGallery() {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: 'images',
+        base64: true,
+        quality: 0.75,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+      // asset.base64 is null for cloud-synced photos on Android that aren't
+      // fully local yet — fall back to reading the URI directly.
+      const base64 = asset.base64 ?? await uriToBase64(asset.uri);
+      await processImage(base64, asset.mimeType);
+    } catch {
+      Alert.alert('Error', 'Could not open gallery. Try again.');
+    }
+  }
+
+  function resetCapture() {
+    setStage('capture');
     setProduct(null);
+    setFailReason(null);
     setName('');
     setQty('1');
     setUnit('units');
@@ -173,20 +132,20 @@ export default function BarcodeScanScreen() {
   }
 
   async function handleAdd() {
-    if (!product || !name.trim()) return;
+    if (!name.trim()) return;
     const quantity = Math.max(0.5, parseFloat(qty) || 0.5);
     setSubmitting(true);
     try {
       await addItem({
         name: name.trim(),
-        category: category || product.categoryKey,
+        category: category || 'other',
         quantity,
         unit,
         urgent,
         notes: notes.trim() || undefined,
       });
       Alert.alert('Item added', `"${name.trim()}" has been added to the list.`, [
-        { text: 'Scan another', onPress: resetScan },
+        { text: 'Scan another', onPress: resetCapture },
         { text: 'Go to list', onPress: () => router.push('/(tabs)/list') },
       ]);
     } catch (err: any) {
@@ -198,7 +157,7 @@ export default function BarcodeScanScreen() {
     }
   }
 
-  if (!permission) {
+  if (captureMode === 'camera' && !permission) {
     return (
       <SafeAreaView className="flex-1 bg-bg-primary items-center justify-center">
         <ActivityIndicator size="large" color="#1D9E75" />
@@ -206,7 +165,7 @@ export default function BarcodeScanScreen() {
     );
   }
 
-  if (!permission.granted) {
+  if (captureMode === 'camera' && permission && !permission.granted) {
     return (
       <SafeAreaView className="flex-1 bg-bg-primary">
         <StatusBar barStyle="dark-content" backgroundColor="#F5F7F5" />
@@ -214,19 +173,22 @@ export default function BarcodeScanScreen() {
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="close" size={22} color="#3D6B55" />
           </TouchableOpacity>
-          <Text className="text-[20px] font-medium text-text-primary">Scan barcode</Text>
+          <Text className="text-[20px] font-medium text-text-primary">Scan product photo</Text>
         </View>
         <View className="flex-1 items-center justify-center px-8 gap-5">
           <Ionicons name="camera-outline" size={64} color="#7AAA96" />
           <Text className="text-[16px] font-medium text-text-primary text-center">Camera permission required</Text>
           <Text className="text-[13px] text-text-muted text-center">
-            HouseWise needs camera access to scan barcodes.
+            HouseWise needs camera access to photograph products.
           </Text>
           <TouchableOpacity
             className="bg-teal-600 rounded-xl py-3.5 px-8 items-center"
             onPress={requestPermission}
           >
             <Text className="text-[15px] font-semibold text-white">Grant permission</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setCaptureMode('gallery')}>
+            <Text className="text-[13px] text-text-muted">Pick from gallery instead</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -242,57 +204,63 @@ export default function BarcodeScanScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="close" size={22} color="#3D6B55" />
         </TouchableOpacity>
-        <Text className="text-[20px] font-medium text-text-primary">Scan barcode</Text>
+        <Text className="text-[20px] font-medium text-text-primary">Scan product photo</Text>
       </View>
 
       {/* Barcode / Photo mode tabs */}
       <View className="flex-row mx-5 mt-4 bg-white border border-border rounded-xl overflow-hidden">
-        <View className="flex-1 flex-row items-center justify-center gap-1.5 py-2.5 bg-teal-600">
-          <Ionicons name="barcode-outline" size={16} color="#fff" />
-          <Text className="text-[13px] font-semibold text-white">Barcode</Text>
-        </View>
-        <View className="w-px bg-border" />
         <TouchableOpacity
           className="flex-1 flex-row items-center justify-center gap-1.5 py-2.5"
-          onPress={() => router.replace('/image-scan')}
+          onPress={() => router.replace('/barcode-confirm')}
         >
-          <Ionicons name="camera-outline" size={16} color="#7AAA96" />
-          <Text className="text-[13px] font-medium text-text-muted">Photo</Text>
+          <Ionicons name="barcode-outline" size={16} color="#7AAA96" />
+          <Text className="text-[13px] font-medium text-text-muted">Barcode</Text>
         </TouchableOpacity>
+        <View className="w-px bg-border" />
+        <View className="flex-1 flex-row items-center justify-center gap-1.5 py-2.5 bg-teal-600">
+          <Ionicons name="camera-outline" size={16} color="#fff" />
+          <Text className="text-[13px] font-semibold text-white">Photo</Text>
+        </View>
       </View>
 
-      {/* Camera frame */}
+      {/* Camera / preview area */}
       <View
         className="mx-5 mt-3 bg-white border border-border rounded-2xl overflow-hidden"
-        style={{ height: 200 }}
+        style={{ height: 220 }}
       >
-        {stage === 'scanning' && !loading && (
-          <CameraView
-            style={{ flex: 1 }}
-            facing="back"
-            onBarcodeScanned={handleBarcodeScanned}
-            barcodeScannerSettings={{
-              barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'qr', 'code128', 'code39'],
-            }}
-          >
-            <View className="flex-1 items-center justify-center">
-              <View className="w-48 h-28 border-2 border-teal-400 rounded-xl items-center justify-center">
-                <View className="absolute top-0 left-0 w-5 h-5 border-t-2 border-l-2 border-teal-300 rounded-tl-md" />
-                <View className="absolute top-0 right-0 w-5 h-5 border-t-2 border-r-2 border-teal-300 rounded-tr-md" />
-                <View className="absolute bottom-0 left-0 w-5 h-5 border-b-2 border-l-2 border-teal-300 rounded-bl-md" />
-                <View className="absolute bottom-0 right-0 w-5 h-5 border-b-2 border-r-2 border-teal-300 rounded-br-md" />
-              </View>
-              <Text style={{ color: 'white', fontSize: 12, marginTop: 12, backgroundColor: 'rgba(0,0,0,0.35)', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20 }}>
-                Point camera at barcode
-              </Text>
+        {stage === 'capture' && captureMode === 'camera' && !loading && (
+          <CameraView ref={cameraRef} style={{ flex: 1 }} facing="back">
+            <View className="flex-1 items-center justify-end pb-4">
+              <TouchableOpacity
+                className="w-16 h-16 rounded-full bg-white items-center justify-center"
+                style={{ borderWidth: 4, borderColor: '#2DD4BF' }}
+                onPress={handleTakePhoto}
+                activeOpacity={0.85}
+              >
+                <View className="w-11 h-11 rounded-full bg-teal-600" />
+              </TouchableOpacity>
             </View>
           </CameraView>
+        )}
+
+        {stage === 'capture' && captureMode === 'gallery' && !loading && (
+          <TouchableOpacity
+            className="flex-1 items-center justify-center gap-3"
+            onPress={handlePickGallery}
+            activeOpacity={0.8}
+          >
+            <View className="w-16 h-16 rounded-2xl bg-teal-50 items-center justify-center">
+              <Ionicons name="images-outline" size={32} color="#1D9E75" />
+            </View>
+            <Text className="text-[14px] font-medium text-teal-600">Choose from gallery</Text>
+            <Text className="text-[12px] text-text-muted">Tap to browse your photos</Text>
+          </TouchableOpacity>
         )}
 
         {loading && (
           <View className="flex-1 items-center justify-center gap-3">
             <ActivityIndicator size="large" color="#1D9E75" />
-            <Text className="text-[13px] text-text-muted">Looking up product...</Text>
+            <Text className="text-[13px] text-text-muted">Identifying product…</Text>
           </View>
         )}
 
@@ -304,23 +272,20 @@ export default function BarcodeScanScreen() {
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text className="text-[14px] font-medium text-text-primary" numberOfLines={2}>
-                  {product.name}
+                  {product.name ?? name}
                 </Text>
                 <View className="flex-row items-center gap-2 mt-0.5 flex-wrap">
                   {product.brand ? <Text className="text-[11px] text-text-muted">{product.brand}</Text> : null}
                   {product.brand && product.size ? <Text className="text-[11px] text-text-faint">·</Text> : null}
                   {product.size ? <Text className="text-[11px] text-text-muted">{product.size}</Text> : null}
-                  <View className="bg-teal-50 rounded-md px-2 py-0.5">
-                    <Text className="text-[10px] font-medium text-teal-600">{product.displayCategory}</Text>
-                  </View>
                 </View>
               </View>
-              <TouchableOpacity onPress={resetScan} className="p-1">
+              <TouchableOpacity onPress={resetCapture} className="p-1">
                 <Ionicons name="refresh-outline" size={18} color="#7AAA96" />
               </TouchableOpacity>
             </View>
             <View className="border-t border-border pt-2">
-              <Text className="text-[10px] text-text-faint">Barcode: {product.barcode}</Text>
+              <Text className="text-[10px] text-text-faint">Identified via photo · Review and adjust below</Text>
             </View>
           </View>
         )}
@@ -329,13 +294,37 @@ export default function BarcodeScanScreen() {
           <View className="flex-1 items-center justify-center gap-3 px-5">
             <Ionicons name="alert-circle-outline" size={36} color="#D6EDE5" />
             <Text className="text-[13px] text-text-muted text-center">
-              Product not found. Try scanning again or type the item name manually.
+              {failReason ?? 'Could not identify this product. Try a clearer photo.'}
             </Text>
           </View>
         )}
       </View>
 
-      {/* Form — shown after scan */}
+      {/* Camera / Gallery sub-toggle (only during capture) */}
+      {stage === 'capture' && !loading && (
+        <View className="flex-row mx-5 mt-3 gap-2">
+          <TouchableOpacity
+            className={`flex-1 flex-row items-center justify-center gap-1.5 py-2.5 rounded-xl border ${captureMode === 'camera' ? 'bg-teal-600 border-teal-600' : 'bg-white border-border'}`}
+            onPress={() => setCaptureMode('camera')}
+          >
+            <Ionicons name="camera-outline" size={16} color={captureMode === 'camera' ? '#fff' : '#7AAA96'} />
+            <Text className={`text-[13px] font-medium ${captureMode === 'camera' ? 'text-white' : 'text-text-muted'}`}>
+              Camera
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            className={`flex-1 flex-row items-center justify-center gap-1.5 py-2.5 rounded-xl border ${captureMode === 'gallery' ? 'bg-teal-600 border-teal-600' : 'bg-white border-border'}`}
+            onPress={() => setCaptureMode('gallery')}
+          >
+            <Ionicons name="images-outline" size={16} color={captureMode === 'gallery' ? '#fff' : '#7AAA96'} />
+            <Text className={`text-[13px] font-medium ${captureMode === 'gallery' ? 'text-white' : 'text-text-muted'}`}>
+              Gallery
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Form — shown after successful identification */}
       {stage === 'found' && product ? (
         <ScrollView
           showsVerticalScrollIndicator={false}
@@ -377,7 +366,6 @@ export default function BarcodeScanScreen() {
                   <Ionicons name="add" size={18} color="#1D9E75" />
                 </TouchableOpacity>
               </View>
-
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -450,7 +438,7 @@ export default function BarcodeScanScreen() {
             />
           </View>
 
-          {/* Actions */}
+          {/* Add button */}
           <TouchableOpacity
             className={`rounded-xl py-4 flex-row items-center justify-center gap-2 ${submitting ? 'bg-teal-400' : 'bg-teal-600'}`}
             onPress={handleAdd}
@@ -475,15 +463,15 @@ export default function BarcodeScanScreen() {
           <View style={{ height: 16 }} />
         </ScrollView>
       ) : (
-        <View className="px-5 mt-6 gap-3">
+        <View className="px-5 mt-4 gap-3">
           {stage === 'not-found' && (
             <TouchableOpacity
               className="bg-teal-600 rounded-xl py-4 items-center flex-row justify-center gap-2"
-              onPress={resetScan}
+              onPress={resetCapture}
               activeOpacity={0.85}
             >
-              <Ionicons name="barcode-outline" size={20} color="#fff" />
-              <Text className="text-[16px] font-semibold text-white">Scan again</Text>
+              <Ionicons name="camera-outline" size={20} color="#fff" />
+              <Text className="text-[16px] font-semibold text-white">Try again</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity

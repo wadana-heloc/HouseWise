@@ -140,6 +140,12 @@ export default function HomeScreen() {
                             onPress={() => router.push('/barcode-confirm')}
                         />
                         <QuickAction
+                            icon="camera-outline"
+                            label="Scan photo"
+                            sub="Photograph product"
+                            onPress={() => router.push('/image-scan')}
+                        />
+                        <QuickAction
                             icon="document-text-outline"
                             label="Weekly report"
                             sub="Review & approve"

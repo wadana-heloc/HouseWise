@@ -44,3 +44,15 @@ export async function updateItemStatus(itemId: string, status: ItemStatus): Prom
   const { data } = await api.post<Item>(`/items/${itemId}/status`, { status });
   return data;
 }
+
+export interface ScanImageResult {
+  name: string | null;
+  brand: string | null;
+  size: string | null;
+  reason: string | null;
+}
+
+export async function scanImage(image_base64: string, media_type: string): Promise<ScanImageResult> {
+  const { data } = await api.post<ScanImageResult>('/items/scan-image', { image_base64, media_type });
+  return data;
+}

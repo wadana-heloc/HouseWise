@@ -150,6 +150,12 @@ export default function FamilyHomeScreen() {
               sub="Identify product"
               onPress={() => router.push('/barcode-confirm')}
             />
+            <QuickAction
+              icon="camera-outline"
+              label="Scan photo"
+              sub="Photograph product"
+              onPress={() => router.push('/image-scan')}
+            />
             <LockedAction label="Weekly report" sub="Admin only" />
             <LockedAction label="Settings"      sub="Admin only" />
           </View>
