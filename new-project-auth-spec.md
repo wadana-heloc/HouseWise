@@ -259,6 +259,12 @@ All paths under `/auth`. Public = no token required. Auth = bearer required.
 | POST   | `/cookbook/recipes/{id}/approve`    | bearer:admin | Flip pending → approved. Idempotent (re-call on approved returns 200).                                 |
 | POST   | `/cookbook/recipes/generate`        | bearer       | AI generate. Persists as `source='ai_generated'`, `status='pending'`. 502 on total agent failure.      |
 | POST   | `/cookbook/recipes/extract-photo`   | bearer       | AI photo extract. Persists as `source='photo'`, `status='pending'`. Partial extractions annotated.     |
+| POST   | `/meal-plan/submissions`            | bearer       | Upsert caller's week submission. Re-submitting same week replaces.                                     |
+| GET    | `/meal-plan/submissions/me`         | bearer       | Caller's own submission for `?week_start=...`. 404 if not yet submitted.                               |
+| GET    | `/meal-plan/submissions/status`     | bearer       | Per-member `submitted: bool` list + counts. Booleans only; submission content not leaked.              |
+| GET    | `/meal-plan/{week_start}`           | bearer       | Plan + 7 days. 404 if no plan yet for that week.                                                       |
+| POST   | `/meal-plan/generate`               | bearer:admin | Generate / re-generate the weekly plan via AI. 502 on total agent failure (no row inserted).           |
+| PATCH  | `/meal-plan/{plan_id}/days/{day_id}`| bearer:admin | Edit one day (`meal_name`, `prep_label`, `notes`, `recipe_id`).                                        |
 
 Refresh is handled by the Supabase JS SDK on the client — there is no `/auth/refresh` endpoint on the backend.
 
@@ -417,6 +423,7 @@ Integration tests against a real Supabase project (no mocking the DB):
   - **Low-stock flags:** any household member can create/list/delete low-stock flags (`/low-stock/*`). One flag per name per household — re-flagging an already-flagged name (by anyone) → 409. Delete is open to every member, not just the creator, since the panel is a shared shopping signal.
   - **Stores:** admin-managed, family-readable. Admin creates/updates/deletes stores (`POST/PATCH/DELETE /stores`); any household member can `GET /stores`. One store per name per household (case-insensitive). URLs are normalized (`carrefour.ae` → `https://carrefour.ae/`).
   - **Cookbook recipes:** any household member can create (manual, AI generate, photo extract) and list recipes. Manual entries auto-approve; AI/photo entries enter as `status='pending'` and require an admin to call `POST /cookbook/recipes/{id}/approve` before they appear in the family-wide cookbook. The submitter sees their own pending row; other family members do not. Admin can `?status=pending` to see the household review queue.
+  - **Meal plan:** any household member can submit their week (busy days + meal requests) and read the resulting plan; only admin can call `POST /meal-plan/generate` or edit a day. The agent's output replaces any existing draft for that week (delete-then-insert of the 7 day rows). Total agent failure → **502, no row inserted** (same write-vs-pass-through split as cookbook). Finalize / shopping-list auto-pop / prices / reactions are **deferred** — their UIs don't exist yet.
 - Do you want admins to be able to **transfer ownership** of a household? (Out of scope for v1 unless you say otherwise.)
 - Do you want **soft-delete** of family members (keep history) or hard-delete? Spec assumes hard-delete via `on delete cascade`.
 - Followup: today `_admin_household_id` reads role from `public.users`, not the JWT. Combined with the 0003 `with check`, the privilege escalation is closed. Worth refactoring role checks to read exclusively from the signed JWT.

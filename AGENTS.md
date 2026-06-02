@@ -60,6 +60,9 @@ backend/
     me/
       router.py        # GET /me, PATCH /me/profile, PATCH /me/health-preferences
       schemas.py       # MeUser/MeHousehold/MeResponse, HealthPreferences*, ProfileUpdate
+    meal_plan/
+      router.py        # /meal-plan/* — submissions, AI generate, day-edit
+      schemas.py
     stores/
       router.py        # /stores/* — admin-managed, family-readable store list
       schemas.py       # StoreCreate/Update/Out + _normalize_url
@@ -70,6 +73,7 @@ backend/
     test_items.py      # items CRUD + status transitions + permissions
     test_low_stock.py  # low-stock flag CRUD + uniqueness
     test_me.py         # self profile updates + health preferences
+    test_meal_plan.py  # submissions + per-member status + AI generate + day-edit
     test_stores.py     # stores CRUD + URL normalization + uniqueness
   pyproject.toml       # runtime + dev deps + ruff/mypy/pytest config (single source of truth)
   .env.example         # template
@@ -86,12 +90,14 @@ supabase/
     0006_init_low_stock.sql                  # low_stock_flags table + unique (household, lower(name))
     0007_init_stores.sql                     # stores table + unique (household, lower(name)) + RLS
     0008_init_cookbook.sql                   # recipes table + recipe_source/recipe_status enums + RLS
+    0009_init_meal_plan.sql                  # meal_plan_submissions + meal_plans + meal_plan_days + meal_plan_status/prep_label enums + RLS
 
 docs/
   auth-flow.md         # runtime sequences, SDK refresh, failure modes
   cookbook-flow.md     # cookbook endpoints, manual-vs-AI approval split, 502 semantics
   items-flow.md        # items endpoints, permission matrix, status state machine
   low-stock-flow.md    # low-stock flags, uniqueness, open-delete rule
+  meal-plan-flow.md    # /meal-plan/* endpoints, AI context, 502 split, deferred (finalize/prices/reactions)
   profile-flow.md      # self profile + health-preferences + admin member-patch
   scan-image-flow.md   # POST /items/scan-image pass-through to the image agent
   stores-flow.md       # stores CRUD, URL normalization, admin/family permission split
@@ -104,6 +110,8 @@ ai_agents/             # ↑ NOT under backend/. Independent Python files owned 
     cookbook_agent.py  # generate_recipe(), personalize_recipe_description() — called by /cookbook/recipes/generate
   recipe-photo-agent/  # Hyphenated folder; same sys.path treatment.
     recipe_photo_agent.py  # extract_recipe_from_image() — called by /cookbook/recipes/extract-photo
+  meal-plan-agent/     # Hyphenated folder; same sys.path treatment.
+    meal_plan_agent.py # generate_weekly_plan() — called by POST /meal-plan/generate
 ```
 
 ---
@@ -160,6 +168,8 @@ The handler is also responsible for catching `ImportError` and returning **503**
 ## Cookbook AI endpoints: writes happen here — 502 on failure (not 200-with-reason)
 
 `POST /cookbook/recipes/generate` and `POST /cookbook/recipes/extract-photo` **persist a row** on success. They diverge from the scan-image "always 200" pattern: a **total agent failure** (`reason` set, no usable `name`) returns **502** with no insert. Partial photo extractions (name present, `reason` describes what was lost) still 201 — the description gets an "Extraction note:" suffix. AGENT IMPORT is module-level in [cookbook/router.py](backend/app/cookbook/router.py), not lazy — the server should fail fast on signature drift, not at the first user request. Don't move those imports inside the handlers. See [docs/cookbook-flow.md](docs/cookbook-flow.md).
+
+`POST /meal-plan/generate` applies the same rule (second site in the codebase): total agent failure → 502, no row inserted; `len(days) != 7` is also treated as failure. Module-level import in [meal_plan/router.py](backend/app/meal_plan/router.py). See [docs/meal-plan-flow.md](docs/meal-plan-flow.md).
 
 Two other invariants that must not silently relax:
 - **Manual recipes are auto-approved; AI/photo recipes are pending.** The approval gate exists because LLM output is sometimes wrong. Removing it bypasses the human review step the product depends on.

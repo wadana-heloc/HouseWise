@@ -78,6 +78,12 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | GET    | `/stores` | bearer | List the caller's household stores, alphabetical. Any member can read. |
 | PATCH  | `/stores/{store_id}` | bearer:admin | Update name and/or URL. Same uniqueness + URL rules as POST. |
 | DELETE | `/stores/{store_id}` | bearer:admin | Remove a store. |
+| POST   | `/meal-plan/submissions` | bearer | Upsert caller's week submission (busy days + meal requests). Re-submitting same week replaces. |
+| GET    | `/meal-plan/submissions/me` | bearer | Caller's own submission for `?week_start=...`. 404 if not yet submitted. |
+| GET    | `/meal-plan/submissions/status` | bearer | Per-member `submitted: bool` for `?week_start=...`. Booleans only; content not leaked. |
+| GET    | `/meal-plan/{week_start}` | bearer | Plan + 7 days sorted by day_of_week. 404 if no plan yet. |
+| POST   | `/meal-plan/generate` | bearer:admin | Generate / re-generate the week's plan via the meal-plan agent. 502 on total agent failure. |
+| PATCH  | `/meal-plan/{plan_id}/days/{day_id}` | bearer:admin | Edit one day's `meal_name`, `prep_label`, `notes`, or `recipe_id`. |
 | GET    | `/health` | public | Liveness. |
 
 Items flow + state machine + permission matrix: [docs/items-flow.md](../docs/items-flow.md).
@@ -86,6 +92,7 @@ Low-stock flags (per-household, name-unique): [docs/low-stock-flow.md](../docs/l
 Stores (admin-managed, family-readable): [docs/stores-flow.md](../docs/stores-flow.md).
 Profile + health-preferences flow: [docs/profile-flow.md](../docs/profile-flow.md).
 Cookbook (manual auto-approved; AI/photo pending → admin approve): [docs/cookbook-flow.md](../docs/cookbook-flow.md).
+Meal plan (submissions + AI generate + day-edit; 502 on agent failure): [docs/meal-plan-flow.md](../docs/meal-plan-flow.md).
 
 **Refresh** is intentionally **not** an endpoint here — the mobile client uses the Supabase JS SDK to refresh access tokens automatically. See [docs/auth-flow.md](../docs/auth-flow.md#token-refresh-handled-by-the-sdk).
 
@@ -106,6 +113,7 @@ Run migrations in order in the Supabase SQL Editor:
 6. [supabase/migrations/0006_init_low_stock.sql](../supabase/migrations/0006_init_low_stock.sql) — `public.low_stock_flags` + unique `(household_id, lower(name))` + GRANTs + same-household SELECT RLS + `updated_at` trigger.
 7. [supabase/migrations/0007_init_stores.sql](../supabase/migrations/0007_init_stores.sql) — `public.stores` + unique `(household_id, lower(name))` + GRANTs + same-household SELECT RLS + `updated_at` trigger.
 8. [supabase/migrations/0008_init_cookbook.sql](../supabase/migrations/0008_init_cookbook.sql) — `public.recipes` + `recipe_source` / `recipe_status` enums + GRANTs + RLS (approved-or-own-pending) + `updated_at` trigger.
+9. [supabase/migrations/0009_init_meal_plan.sql](../supabase/migrations/0009_init_meal_plan.sql) — `public.meal_plan_submissions`, `public.meal_plans`, `public.meal_plan_days` + `meal_plan_status` / `prep_label` enums + GRANTs + same-household SELECT RLS + `updated_at` trigger.
 
 0001 creates:
 - `public.households`, `public.users` with FKs into `auth.users`
