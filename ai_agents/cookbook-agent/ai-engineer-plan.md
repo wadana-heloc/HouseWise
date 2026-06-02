@@ -51,27 +51,29 @@ sys.stdout.reconfigure(encoding='utf-8')  # Windows UTF-8
 
 import anthropic
 import json
-import os
 from dotenv import load_dotenv
 load_dotenv()
 
-client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+# anthropic.Anthropic — reads ANTHROPIC_API_KEY from the environment automatically
+client = anthropic.Anthropic()
 ```
 
-**JSON output pipeline (same as price agent):**
+**JSON output pipeline:**
 ```python
-def _strip_markdown_fences(text: str) -> str:
-    text = text.strip()
-    if text.startswith('```'):
-        text = text[text.index('\n')+1:]
-    if text.endswith('```'):
-        text = text[:text.rindex('```')]
-    return text.strip()
+def _strip_markdown_fences(raw_text: str) -> str:
+    if not raw_text.startswith('```'):
+        return raw_text
+    # Split on first newline only — never split on ``` globally, backticks inside
+    # JSON content (e.g. recipe names) would corrupt the extraction.
+    content_after_opening_fence = raw_text.split('\n', 1)[-1]
+    return content_after_opening_fence.rsplit('```', 1)[0].strip()
 
 def _extract_json_object(text: str) -> str:
-    start = text.index('{')
-    end = text.rindex('}') + 1
-    return text[start:end]
+    object_start_index = text.find('{')
+    object_end_index = text.rfind('}')
+    if object_start_index == -1 or object_end_index == -1:
+        return text
+    return text[object_start_index : object_end_index + 1]
 ```
 
 **Never-raises pattern:**
@@ -114,7 +116,7 @@ Enforce this in every system prompt that produces ingredients.
 
 ---
 
-## Agent 1: Cookbook Agent
+## Agent 1: Cookbook Agent ✅ Delivered
 
 ### Entry Points
 
@@ -124,16 +126,15 @@ Enforce this in every system prompt that produces ingredients.
 def generate_recipe(prompt: str, household_context: dict) -> dict:
     """
     What: Generates a complete recipe based on a text prompt and household member profiles.
-    Input: prompt (str), household_context ({prompt, tag_hints, household_members})
+    Input: prompt (str), household_context ({tag_hints, household_members})
     Output: {name, description, ingredients, instructions, tags, prep_minutes, servings, reason}
     Returns: always returns dict, never raises
     """
 ```
 
-`household_context` shape:
+`household_context` shape — note: `prompt` is a separate argument, NOT inside this dict:
 ```python
 {
-    'prompt': 'A high-protein pasta kids will eat',
     'tag_hints': ['high_protein', 'kid_friendly'],
     'household_members': [
         {
@@ -275,7 +276,7 @@ pytest>=8.0.0
 
 ---
 
-## Agent 2: Recipe Photo Agent
+## Agent 2: Recipe Photo Agent ✅ Delivered
 
 ### Entry Point
 
@@ -289,81 +290,22 @@ def extract_recipe_from_image(image_base64: str, media_type: str) -> dict:
     """
 ```
 
-**Key difference from `image_agent.py`:** No EasyOCR — sends the image directly to Claude Vision. Recipe pages have complex layouts (columns, photography) that need full vision understanding, not OCR preprocessing.
+**Why no EasyOCR:** Recipe pages use multi-column layouts, embedded photos, and fraction symbols (½, ¾). OCR reads left-to-right and loses column structure — quantities end up misaligned from ingredient names. Claude Vision understands spatial layout in one pass.
 
-**Implementation:**
-
-```python
-def extract_recipe_from_image(image_base64: str, media_type: str) -> dict:
-    try:
-        response = client.messages.create(
-            model=MODEL_NAME,
-            max_tokens=MAX_TOKENS,
-            messages=[
-                {
-                    'role': 'user',
-                    'content': [
-                        {
-                            'type': 'text',
-                            'text': EXTRACT_SYSTEM_PROMPT,
-                            'cache_control': {'type': 'ephemeral'},
-                        },
-                        {
-                            'type': 'image',
-                            'source': {
-                                'type': 'base64',
-                                'media_type': media_type,
-                                'data': image_base64,
-                            },
-                        },
-                        {
-                            'type': 'text',
-                            'text': 'Extract the recipe from this image.',
-                        }
-                    ],
-                }
-            ],
-        )
-        raw = response.content[-1].text
-        cleaned = _strip_markdown_fences(raw)
-        data = json.loads(_extract_json_object(cleaned))
-        return RecipePhotoResult(**data).model_dump()
-    except Exception as exc:
-        return RecipePhotoResult(reason=f'Extraction failed: {exc}').model_dump()
-```
+**Model: `claude-haiku-4-5-20251001` (not Sonnet)**
+Haiku still understands spatial layout but costs ~6× less per image (~$0.008 vs ~$0.05). Recipe extraction is a one-time scan action per recipe, so accuracy/cost lands in Haiku's favour.
 
 ### `recipe_photo_config.py`
 
 ```python
-MODEL_NAME = 'claude-sonnet-4-6'
-MAX_TOKENS = 3000
-
-EXTRACT_SYSTEM_PROMPT = """You are a recipe extraction specialist. Extract the complete recipe
-from the cookbook page image provided.
-
-Return ONLY a valid JSON object with this exact structure:
-{
-  "name": string or null,
-  "description": string or null,
-  "ingredients": [{"name": string, "quantity": string, "unit": string, "category": string}],
-  "instructions": string or null (numbered steps),
-  "tags": [string],
-  "prep_minutes": integer or null,
-  "servings": integer or null,
-  "reason": null (or brief note if extraction was partial)
-}
-
-Rules:
-- category MUST be one of: dairy, meat, grains, bakery, pantry, produce, frozen, drinks, cleaning, other
-- If a field is not visible in the image, set it to null
-- If the image is not a recipe page, return all fields as null and explain in "reason"
-- No markdown, no backticks, no prose outside the JSON
-"""
+RECIPE_PHOTO_MODEL_NAME = 'claude-haiku-4-5-20251001'
+RECIPE_PHOTO_MAX_TOKENS = 3000
+RECIPE_PHOTO_EXTRACT_USER_TEXT = 'Extract the recipe from this image.'
 ```
 
 ---
 
-## Agent 3: Meal Plan Agent
+## Agent 3: Meal Plan Agent ✅ Delivered
 
 ### Entry Point
 
@@ -373,137 +315,147 @@ def generate_weekly_plan(context: dict) -> dict:
     What: Generates a 7-day dinner plan for a household based on member submissions.
     Input: context dict (see shape below)
     Output: {ai_summary, days: [{day_of_week, recipe_id, meal_name, prep_label,
-             notes, suggested_ingredients}]}
+             notes, suggested_ingredients}], reason}
     Returns: always returns dict, never raises
     """
 ```
 
-`context` shape:
+`context` shape — two key design decisions vs. original plan:
+1. `available_recipes` sends `ingredient_categories` (unique set) instead of full ingredient lists — gives Claude freshness ordering without token bloat
+2. `last_week_meals` added — prevents repeating recipes week after week
+
 ```python
 {
     'week_start': '2026-06-08',
     'household_members': [
         {
-            'user_id': 'uuid',
             'display_name': 'Nour',
             'age_group': 'adult',
             'taste_preferences': 'loves spicy food',
             'health_preferences': {'high_protein': True, ...},
-            'busy_days': [2, 4],  # ISO: 1=Mon, 7=Sun
+            'busy_days': [2, 4],       # ISO weekday: 1=Mon, 7=Sun
             'meal_requests': [
                 {'description': 'I want burgers', 'recipe_id': None},
             ]
         }
     ],
     'available_recipes': [
-        {'id': 'uuid', 'name': 'Chicken Curry', 'tags': ['high_protein', 'prep_once_eat_twice'], 'ingredients': [...]}
+        {
+            'id': 'uuid',
+            'name': 'Chicken Curry',
+            'tags': ['high_protein', 'prep_once_eat_twice'],
+            'prep_minutes': 40,
+            'ingredient_categories': ['meat', 'dairy', 'produce', 'pantry']  # unique categories only
+        }
     ],
     'low_stock_items': ['milk', 'eggs'],
+    'last_week_meals': [               # meal names from previous week — Claude avoids repeating them
+        'Chicken Curry', 'Grilled Salmon', 'Pasta Carbonara', ...
+    ],
 }
 ```
 
 Output shape:
 ```python
 {
-    'ai_summary': "Monday's chicken curry cooks in bulk — reheated Wednesday. Burgers on Thursday for Nour as requested. Ahmed's Chinese food request couldn't fit this week; suggest it next Sunday.",
+    'ai_summary': "Monday's salmon uses the freshest ingredients. Burgers Wednesday for Ahmed as requested...",
     'days': [
         {
             'day_of_week': 1,
-            'recipe_id': 'uuid',        # null if invented
-            'meal_name': 'Chicken Curry',
+            'recipe_id': 'uuid',        # null when Claude invented the meal
+            'meal_name': 'Grilled Salmon',
             'prep_label': 'prep',       # 'prep' | 'reheat' | 'fresh'
-            'notes': 'Cook double batch — use leftovers Wednesday',
+            'notes': 'Cook double batch — leftovers used Wednesday',
             'suggested_ingredients': [] # only populated when recipe_id is null
         },
         {
             'day_of_week': 2,
             'recipe_id': None,
-            'meal_name': 'Quick Pasta Aglio e Olio',
+            'meal_name': 'Homemade Burgers',
             'prep_label': 'fresh',
-            'notes': 'Busy day for 3 members — 15 min meal',
+            'notes': "Ahmed's request — no match in cookbook",
             'suggested_ingredients': [
-                {'name': 'spaghetti', 'quantity': '400', 'unit': 'g', 'category': 'grains'},
+                {'name': 'beef mince', 'quantity': '500', 'unit': 'g', 'category': 'meat'},
             ]
         }
-    ]
+    ],
+    'reason': None,                     # null on success, error string on failure
 }
 ```
 
-### System Prompt Rules
+### System Prompt Rules (implemented)
 
 ```
-RULES FOR DAYS:
-- Generate exactly 7 entries (day_of_week 1 through 7)
-- Dinners only — one entry per day
-- prep_label: 'prep' (cook in bulk), 'reheat' (leftover from prep day), 'fresh' (quick cook)
-- On busy_days: assign 'reheat' or 'fresh' meals only
-- Apply cook-once-eat-twice: if a day is 'prep', at least one later day should 'reheat' it
-- If a member request matches an available_recipe: set recipe_id; else recipe_id=null + suggested_ingredients
-- ingredient category MUST be: dairy|meat|grains|bakery|pantry|produce|frozen|drinks|cleaning|other
+FRESHNESS ORDERING:
+- Recipes with ingredient_categories containing 'meat', 'produce', or 'dairy': assign to days 1–3
+- Recipes relying on 'grains', 'pantry', or 'frozen': assign to days 4–7
 
-RULES FOR ai_summary:
-- Mention every member's requests — both met and unmet
-- For unmet: explain briefly why and suggest carrying to next week
-- Mention the prep-once strategy used
-- 3-6 sentences
+VARIETY:
+- Do NOT assign any meal whose name appears in last_week_meals
+- If a member requests a last-week recipe, honor it but note it in ai_summary
 
-OUTPUT: Return ONLY a valid JSON object. No markdown, no backticks, no prose outside JSON.
+BUSY DAYS:
+- A day is busy if ANY member lists it in busy_days
+- On busy days: assign 'reheat' or 'fresh' only — never 'prep'
+
+COOK-ONCE-EAT-TWICE:
+- If a day is 'prep', at least one later day must 'reheat' that same meal
+- The prep day's notes must state which day leftovers will be used
+
+MEMBER REQUESTS:
+- Match request to available_recipes by name; set recipe_id if matched
+- If no match: recipe_id=null, populate suggested_ingredients
+
+SUGGESTED INGREDIENTS:
+- Only populate when recipe_id is null
+- For recipe_id recipes: leave suggested_ingredients as []
+- category MUST be: dairy|meat|grains|bakery|pantry|produce|frozen|drinks|cleaning|other
 ```
 
 ### `meal_plan_config.py`
 
 ```python
-MODEL_NAME = 'claude-sonnet-4-6'
-MAX_TOKENS = 4000
-SYSTEM_PROMPT = """..."""  # Full system prompt as above
+MEAL_PLAN_MODEL_NAME = 'claude-sonnet-4-6'
+MEAL_PLAN_MAX_TOKENS = 4000
 ```
 
 ---
 
 ## Testing
 
-Each agent gets a `test_<name>_agent.py` using real API calls:
+Each agent has a `test_<name>_agent.py` using **mocked API calls** (no real API key needed for unit tests) and a `run_test.py` for real smoke testing.
 
-**`test_cookbook_agent.py`:**
-```python
-def test_generate_recipe_returns_valid_structure():
-    from cookbook_agent import generate_recipe
-    result = generate_recipe('A quick pasta for a family with kids', {...})
-    assert result['name'] is not None
-    valid_categories = {'dairy','meat','grains','bakery','pantry','produce','frozen','drinks','cleaning','other'}
-    for ing in result['ingredients']:
-        assert ing['category'] in valid_categories
+Tests cover every function: the three JSON parsing helpers + all entry points. Key assertions per agent:
 
-def test_generate_recipe_never_raises_on_bad_input():
-    from cookbook_agent import generate_recipe
-    result = generate_recipe('', {})
-    assert 'reason' in result
-```
+**Cookbook agent:** valid recipe structure, all ingredient categories in allowed set, never raises on bad input, `reason` set on API error.
 
-**`test_meal_plan_agent.py`:**
-```python
-def test_generate_plan_returns_7_days():
-    from meal_plan_agent import generate_weekly_plan
-    result = generate_weekly_plan({...minimal context...})
-    assert len(result['days']) == 7
-    valid_labels = {'prep', 'reheat', 'fresh'}
-    for day in result['days']:
-        assert day['prep_label'] in valid_labels
-```
+**Recipe photo agent:** valid recipe structure, image content block format verified (type/source/media_type/data), Haiku model confirmed, non-recipe image returns reason not exception.
+
+**Meal plan agent:** exactly 7 days returned, `day_of_week` covers 1–7 with no gaps, all `prep_label` values valid, `suggested_ingredients` empty for cookbook recipes, `last_week_meals` and `ingredient_categories` present in API payload.
 
 ---
 
 ## Handoff to Backend Engineer
 
-Share:
-1. Function signatures above — these are the contract
-2. `requirements.txt` for each agent (backend must install deps)
-3. Path convention: `ai_agents/cookbook-agent/cookbook_agent.py` (backend imports via `sys.path.insert`)
-4. Confirm `ANTHROPIC_API_KEY` is in the backend's `.env`
+All 3 agents are delivered. See `backend-engineer-plan.md` Phase 3 and Phase 5 for the full confirmed contracts with Supabase query code.
 
-The backend calls your functions like this:
+**Agent locations:**
+```
+ai_agents/cookbook-agent/cookbook_agent.py         → generate_recipe, personalize_recipe_description
+ai_agents/recipe-photo-agent/recipe_photo_agent.py → extract_recipe_from_image
+ai_agents/meal-plan-agent/meal_plan_agent.py        → generate_weekly_plan
+```
+
+**Import pattern per agent (three separate path inserts):**
 ```python
 sys.path.insert(0, str(Path(__file__).parents[3] / 'ai_agents' / 'cookbook-agent'))
-from cookbook_agent import generate_recipe
-result = await run_in_threadpool(generate_recipe, prompt, household_context)
+from cookbook_agent import generate_recipe, personalize_recipe_description
+
+sys.path.insert(0, str(Path(__file__).parents[3] / 'ai_agents' / 'recipe-photo-agent'))
+from recipe_photo_agent import extract_recipe_from_image
+
+sys.path.insert(0, str(Path(__file__).parents[3] / 'ai_agents' / 'meal-plan-agent'))
+from meal_plan_agent import generate_weekly_plan
 ```
+
+**`ANTHROPIC_API_KEY` must be in the backend's `.env`** — all agents read it automatically via `anthropic.Anthropic()`.

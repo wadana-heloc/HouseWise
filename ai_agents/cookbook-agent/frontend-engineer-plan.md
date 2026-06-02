@@ -311,6 +311,11 @@ export const useCookbookStore = create<CookbookState>((set, get) => ({
 
 ## Phase 3 — Meal Plan Foundation
 
+### AI agent status (for your awareness)
+- ✅ `generate_weekly_plan` agent — delivered. The backend `/meal-plan/generate` endpoint calls it and returns a full `MealPlan` with 7 days or raises a 502 error. Show the same error toast as any API error.
+- The agent automatically avoids repeating last week's recipes and orders meals by ingredient freshness (perishable meals first in the week). This is handled inside the agent — no extra frontend work needed.
+- Days where `recipe_id` is null are invented meals. Their `suggested_ingredients` are stored in the database and used by the backend to auto-populate the shopping list on finalize. The frontend does not need to handle `suggested_ingredients` directly.
+
 ### `services/mealPlan.ts`
 
 ```typescript

@@ -40,19 +40,32 @@ alter table public.users
   add column if not exists age_group text
     check (age_group in ('kid', 'teen', 'adult', 'senior')),
   add column if not exists taste_preferences text
-    check (char_length(taste_preferences) <= 500);
+    check (char_length(taste_preferences) <= 500),
+  add column if not exists health_preferences jsonb not null default
+    '{"high_protein": false, "low_calories": false, "low_carbs": false, "low_sugar": false, "whole_grain": false}'::jsonb;
 ```
+
+`health_preferences` is a required field for all 3 AI agents — the cookbook, photo, and meal plan agents all read it from the member profile. It must be present with a valid default for every existing user row.
 
 ### `me/schemas.py` — add to `ProfileUpdate` and `MeUser`
 
 ```python
+class HealthPreferences(BaseModel):
+    high_protein: bool = False
+    low_calories: bool = False
+    low_carbs: bool = False
+    low_sugar: bool = False
+    whole_grain: bool = False
+
+# Add to ProfileUpdate and MeUser:
 age_group: Optional[Literal['kid', 'teen', 'adult', 'senior']] = None
 taste_preferences: Optional[str] = Field(None, max_length=500)
+health_preferences: Optional[HealthPreferences] = None
 ```
 
 ### `household/schemas.py` — add to `CreateMemberRequest`, `UpdateMemberRequest`, `MemberRow`, `CreateMemberResponse`
 
-Same two optional fields. Admin sets them when creating/editing a family member.
+Same three optional fields. Admin sets them when creating/editing a family member.
 
 ### `me/router.py` + `household/router.py`
 
@@ -317,6 +330,25 @@ Return shape — same as `RecipeOut` minus `id`, `household_id`, `source`, `stat
 
 **Error handling:** if `result['reason'] is not None`, the agent failed — raise `HTTPException(status_code=502, detail=result['reason'])`. Do not insert a broken recipe into the database.
 
+**Save logic after successful call:**
+```python
+insert_payload = {
+    'household_id': household_id,
+    'name': result['name'],
+    'description': result['description'],
+    'ingredients': result['ingredients'],   # list of dicts — stored as jsonb
+    'instructions': result['instructions'],
+    'tags': result['tags'],
+    'prep_minutes': result['prep_minutes'],
+    'servings': result['servings'],
+    'source': 'ai_generated',
+    'status': 'pending',                    # admin must approve before it appears in cookbook
+    'submitted_by': str(user.user_id),
+}
+saved = sb.table('recipes').insert(insert_payload).execute()
+return RecipeOut(**saved.data[0])
+```
+
 ---
 
 ### Confirmed contract: `personalize_recipe_description`
@@ -355,6 +387,36 @@ recent_history = [
 
 Return: plain `str` — never raises. Returns `""` on agent failure. If the returned string is empty, still cache it (avoids hammering the agent on every request for a bad recipe).
 
+**Save logic — upsert into `recipe_personalized_descriptions`:**
+```python
+sb.table('recipe_personalized_descriptions').upsert(
+    {
+        'recipe_id': recipe_id,
+        'user_id': str(caller.user_id),
+        'description': description,         # empty string is valid — still cache it
+        'generated_at': datetime.utcnow().isoformat(),
+    },
+    on_conflict='recipe_id,user_id'         # unique constraint — update if exists
+).execute()
+```
+
+**Cache read logic — check before calling agent:**
+```python
+cached = sb.table('recipe_personalized_descriptions') \
+    .select('description, generated_at') \
+    .eq('recipe_id', recipe_id) \
+    .eq('user_id', str(caller.user_id)) \
+    .single().execute()
+
+recipe = sb.table('recipes').select('updated_at').eq('id', recipe_id).single().execute()
+
+# Stale if cache predates the last recipe edit
+if cached.data and cached.data['generated_at'] >= recipe.data['updated_at']:
+    return {'description': cached.data['description'], 'generated_at': cached.data['generated_at']}
+
+# Otherwise fall through to agent call + upsert above
+```
+
 ---
 
 ### Confirmed contract: `extract_recipe_from_image`
@@ -390,6 +452,30 @@ Return shape — identical to `generate_recipe`:
 | `reason is None` | Full extraction success | Save normally |
 
 **Model note:** Uses `claude-haiku-4-5-20251001` (vision) — not Sonnet. Cost is ~$0.008 per image vs. ~$0.05 for Sonnet. The backend does not control the model; the agent file does.
+
+**Save logic after successful call:**
+```python
+# Partial extraction: save what was found, append reason as a note in description
+description = result['description'] or ''
+if result['reason']:
+    description = f"{description}\n\nExtraction note: {result['reason']}".strip()
+
+insert_payload = {
+    'household_id': household_id,
+    'name': result['name'],
+    'description': description,
+    'ingredients': result['ingredients'],
+    'instructions': result['instructions'],
+    'tags': result['tags'],
+    'prep_minutes': result['prep_minutes'],
+    'servings': result['servings'],
+    'source': 'photo',
+    'status': 'pending',                    # admin must review and approve
+    'submitted_by': str(user.user_id),
+}
+saved = sb.table('recipes').insert(insert_payload).execute()
+return RecipeOut(**saved.data[0])
+```
 
 ---
 
@@ -448,10 +534,103 @@ alter table public.recipe_history
   add constraint if not exists rh_plan_id_fk
   foreign key (plan_id) references public.meal_plans(id) on delete set null;
 
--- GRANTs + RLS + trigger (same pattern as other migrations)
+-- GRANTs
+grant select, insert, update, delete on public.meal_plan_submissions to service_role;
+grant select, insert, update, delete on public.meal_plans to service_role;
+grant select, insert, update, delete on public.meal_plan_days to service_role;
+grant select, insert on public.meal_plan_submissions to authenticated;
+grant select on public.meal_plans to authenticated;
+grant select on public.meal_plan_days to authenticated;
+
+-- RLS
+alter table public.meal_plan_submissions enable row level security;
+alter table public.meal_plans enable row level security;
+alter table public.meal_plan_days enable row level security;
+
+-- Submissions: user sees/edits own; admin sees all in household
+create policy mps_select on public.meal_plan_submissions for select to authenticated
+  using (
+    user_id = auth.uid()
+    or (
+      household_id = public.current_household_id()
+      and exists (select 1 from public.users where id = auth.uid() and role = 'admin')
+    )
+  );
+
+-- Meal plans: all household members can view
+create policy mp_select on public.meal_plans for select to authenticated
+  using (household_id = public.current_household_id());
+
+-- Meal plan days: all household members can view (via parent plan)
+create policy mpd_select on public.meal_plan_days for select to authenticated
+  using (
+    exists (
+      select 1 from public.meal_plans
+      where id = plan_id and household_id = public.current_household_id()
+    )
+  );
+
+-- updated_at trigger
+drop trigger if exists meal_plans_set_updated_at on public.meal_plans;
+create trigger meal_plans_set_updated_at
+  before update on public.meal_plans
+  for each row execute function public.set_updated_at();
 ```
 
 ### Module: `backend/app/meal_plan/`
+
+**`schemas.py` key types:**
+
+```python
+class MealRequest(BaseModel):
+    description: str
+    recipe_id: Optional[UUID] = None
+
+class SubmissionUpsert(BaseModel):
+    week_start: date
+    busy_days: list[int] = []              # ISO weekday: 1=Mon, 7=Sun
+    meal_requests: list[MealRequest] = []
+
+class MealPlanDayOut(BaseModel):
+    id: UUID
+    plan_id: UUID
+    day_of_week: int                       # 1–7
+    recipe_id: Optional[UUID]
+    meal_name: str
+    prep_label: str                        # 'prep' | 'reheat' | 'fresh'
+    notes: Optional[str]
+    # suggested_ingredients NOT exposed to frontend — backend-only for shopping list
+
+class MealPlanOut(BaseModel):
+    id: UUID
+    household_id: UUID
+    week_start: date
+    status: str                            # 'draft' | 'finalized'
+    ai_summary: Optional[str]
+    price_results: Optional[dict]          # null until background task completes
+    created_by: UUID
+    created_at: datetime
+    updated_at: datetime
+    days: list[MealPlanDayOut] = []
+
+class MealPlanSubmissionOut(BaseModel):
+    id: UUID
+    user_id: UUID
+    week_start: date
+    busy_days: list[int]
+    meal_requests: list[MealRequest]
+    submitted_at: datetime
+
+class SubmissionCountOut(BaseModel):
+    submitted: int
+    total: int
+
+class DayUpdate(BaseModel):               # admin edits a day after plan is generated
+    meal_name: Optional[str] = None
+    prep_label: Optional[str] = None
+    notes: Optional[str] = None
+    recipe_id: Optional[UUID] = None
+```
 
 **`router.py` endpoints — Phase 4 (no AI):**
 
@@ -476,7 +655,13 @@ sb.table('meal_plan_submissions').upsert(
 
 ## Phase 5 — Meal Plan AI + Finalization
 
-**Dependency on AI engineer:** Receive `generate_weekly_plan(context) -> dict`
+**AI agent status:** ✅ `generate_weekly_plan` — delivered (`ai_agents/meal-plan-agent/meal_plan_agent.py`)
+
+**Import pattern:**
+```python
+sys.path.insert(0, str(Path(__file__).parents[3] / 'ai_agents' / 'meal-plan-agent'))
+from meal_plan_agent import generate_weekly_plan
+```
 
 **Add endpoints:**
 ```
@@ -485,13 +670,213 @@ POST /meal-plan/{id}/finalize  → admin: finalize + auto-add shopping list + ba
 GET  /meal-plan/{week}/prices  → admin: fetch price_results (frontend polls this)
 ```
 
-**Finalize endpoint logic:**
-1. Set `status='finalized'`
-2. Load all `meal_plan_days` — collect ingredients from `recipes.ingredients` (if `recipe_id` set) or `suggested_ingredients` (if invented)
-3. Deduplicate + aggregate by ingredient name
-4. Insert directly into `items` table: `status='pending'`, `notes='From meal plan: {week_start}'`, `added_by=admin_id`
-5. Insert `recipe_history` rows for each day that has a `recipe_id`
-6. Fire background task: `search_grocery_prices(item_names, store_urls)` → store in `meal_plans.price_results`
+---
+
+### Confirmed contract: `generate_weekly_plan`
+
+```python
+result = await run_in_threadpool(generate_weekly_plan, context)
+```
+
+`context` — assemble from Supabase before calling:
+```python
+# 1. Members with their submissions for this week
+members_res = sb.table('users') \
+    .select('id,display_name,age_group,taste_preferences,health_preferences') \
+    .eq('household_id', household_id).execute()
+
+submissions_res = sb.table('meal_plan_submissions') \
+    .select('user_id,busy_days,meal_requests') \
+    .eq('household_id', household_id) \
+    .eq('week_start', week_start).execute()
+
+# dict[str, dict] — index submissions by user_id for fast lookup
+submissions_by_user = {s['user_id']: s for s in submissions_res.data}
+
+# 2. Merge member profile with their submission
+household_members = [
+    {
+        'display_name': m['display_name'],
+        'age_group': m['age_group'],
+        'taste_preferences': m['taste_preferences'],
+        'health_preferences': m['health_preferences'],
+        'busy_days': submissions_by_user.get(m['id'], {}).get('busy_days', []),
+        'meal_requests': submissions_by_user.get(m['id'], {}).get('meal_requests', []),
+    }
+    for m in members_res.data
+]
+
+# 3. Available recipes — trimmed to what Claude needs (no full ingredient lists)
+recipes_res = sb.table('recipes') \
+    .select('id,name,tags,prep_minutes,ingredients') \
+    .eq('household_id', household_id) \
+    .eq('status', 'approved').execute()
+
+available_recipes = [
+    {
+        'id': r['id'],
+        'name': r['name'],
+        'tags': r['tags'],
+        'prep_minutes': r['prep_minutes'],
+        'ingredient_categories': list({ing['category'] for ing in r['ingredients']}),
+    }
+    for r in recipes_res.data
+]
+
+# 4. Last week's meal names — prevents repeating recipes week after week
+prev_week_start = (date.fromisoformat(week_start) - timedelta(days=7)).isoformat()
+prev_days_res = sb.table('meal_plan_days') \
+    .select('meal_name, meal_plans!inner(week_start, household_id)') \
+    .eq('meal_plans.household_id', household_id) \
+    .eq('meal_plans.week_start', prev_week_start).execute()
+last_week_meals = [row['meal_name'] for row in prev_days_res.data]
+
+# 5. Low stock items
+low_stock_res = sb.table('items') \
+    .select('name') \
+    .eq('household_id', household_id) \
+    .eq('status', 'low_stock').execute()
+low_stock_items = [row['name'] for row in low_stock_res.data]
+
+context = {
+    'week_start': week_start,
+    'household_members': household_members,
+    'available_recipes': available_recipes,
+    'low_stock_items': low_stock_items,
+    'last_week_meals': last_week_meals,
+}
+```
+
+Return shape:
+```python
+{
+    'ai_summary': str | None,
+    'days': [
+        {
+            'day_of_week': int,          # 1=Mon through 7=Sun, always exactly 7 entries
+            'recipe_id': str | None,     # None when Claude invented the meal
+            'meal_name': str,
+            'prep_label': str,           # 'prep' | 'reheat' | 'fresh'
+            'notes': str | None,
+            'suggested_ingredients': [   # only populated when recipe_id is None
+                {'name': str, 'quantity': str, 'unit': str, 'category': str}
+            ],
+        }
+    ],
+    'reason': str | None,                # None on success, error string on failure
+}
+```
+
+**Error handling:** if `result['reason'] is not None` and `result['days']` is empty → raise `HTTPException(status_code=502, detail=result['reason'])`.
+
+**Save logic after successful call:**
+```python
+# Upsert plan row (re-generating replaces existing draft for the same week)
+plan_res = sb.table('meal_plans').upsert(
+    {
+        'household_id': household_id,
+        'week_start': week_start,
+        'status': 'draft',
+        'ai_summary': result['ai_summary'],
+        'created_by': str(user.user_id),
+    },
+    on_conflict='household_id,week_start'
+).execute()
+
+plan_id = plan_res.data[0]['id']
+
+# Delete existing days before re-inserting (avoids unique constraint conflicts on day_of_week)
+sb.table('meal_plan_days').delete().eq('plan_id', plan_id).execute()
+
+# Insert all 7 days
+days_payload = [
+    {
+        'plan_id': plan_id,
+        'day_of_week': day['day_of_week'],
+        'recipe_id': day['recipe_id'],
+        'meal_name': day['meal_name'],
+        'prep_label': day['prep_label'],
+        'notes': day['notes'],
+        'suggested_ingredients': day['suggested_ingredients'],  # stored as jsonb, used at finalize
+    }
+    for day in result['days']
+]
+sb.table('meal_plan_days').insert(days_payload).execute()
+```
+
+**Shopping list population on finalize — two sources:**
+
+| Day type | Where ingredients come from |
+|---|---|
+| `recipe_id` is set | Join `meal_plan_days → recipes → ingredients` in the database |
+| `recipe_id` is None | Use `meal_plan_days.suggested_ingredients` (agent-generated) |
+
+Never ask the agent to re-output cookbook recipe ingredients — they are already in the database.
+
+---
+
+**Finalize endpoint logic — exact steps:**
+
+```python
+# Step 1: mark plan as finalized
+sb.table('meal_plans').update({'status': 'finalized'}).eq('id', plan_id).execute()
+
+# Step 2: load all days with their linked recipe ingredients
+days_res = sb.table('meal_plan_days') \
+    .select('recipe_id, suggested_ingredients, recipes(ingredients)') \
+    .eq('plan_id', plan_id).execute()
+
+# Step 3: collect all ingredients from both sources
+all_ingredients = []
+for day in days_res.data:
+    if day['recipe_id'] and day['recipes']:
+        all_ingredients.extend(day['recipes']['ingredients'])   # from cookbook
+    else:
+        all_ingredients.extend(day['suggested_ingredients'])    # agent-generated
+
+# Step 4: deduplicate by name (aggregate quantities for same-name items)
+# dict[str, dict] — keyed by ingredient name
+aggregated = {}
+for ing in all_ingredients:
+    key = ing['name'].lower().strip()
+    if key not in aggregated:
+        aggregated[key] = {**ing}
+    # (quantity aggregation optional — simplest approach is just deduplicate by name)
+
+# Step 5: insert into items table
+items_payload = [
+    {
+        'household_id': household_id,
+        'name': ing['name'],
+        'category': ing['category'],
+        'status': 'pending',
+        'notes': f'From meal plan: {week_start}',
+        'added_by': str(user.user_id),
+    }
+    for ing in aggregated.values()
+]
+if items_payload:
+    sb.table('items').insert(items_payload).execute()
+
+# Step 6: insert recipe_history rows for each day that has a recipe_id
+history_rows = [
+    {
+        'household_id': household_id,
+        'recipe_id': day['recipe_id'],
+        'user_id': str(user.user_id),
+        'plan_id': plan_id,
+        'reaction': None,                   # filled later when member reacts
+    }
+    for day in days_res.data
+    if day['recipe_id'] is not None
+]
+if history_rows:
+    sb.table('recipe_history').insert(history_rows).execute()
+
+# Step 7: fire background price search (returns 202 immediately)
+item_names = [ing['name'] for ing in aggregated.values()]
+background_tasks.add_task(_price_search_task, plan_id, item_names, store_urls)
+```
 
 **Background price task:**
 ```python
