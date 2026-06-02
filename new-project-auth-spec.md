@@ -251,6 +251,14 @@ All paths under `/auth`. Public = no token required. Auth = bearer required.
 | PATCH  | `/stores/{store_id}`                | bearer:admin | Update `name` and/or `url`. Same uniqueness + URL rules as POST. 404 cross-household.                  |
 | DELETE | `/stores/{store_id}`                | bearer:admin | Remove a store. 404 cross-household.                                                                   |
 | POST   | `/items/scan-image`                 | bearer       | Pass-through to the image-analysis agent (EasyOCR + Claude). Returns `{name, brand, size, reason}` — does not persist. Always 200; failures live in `reason`. |
+| GET    | `/cookbook/recipes`                 | bearer       | List recipes. Default scope: approved + caller's own pending. Filters: `tag`, `search`, `source`, `status`. |
+| POST   | `/cookbook/recipes`                 | bearer       | Manual entry (auto-approved). `source='manual'`, `status='approved'`.                                  |
+| GET    | `/cookbook/recipes/{id}`            | bearer       | Fetch one. 404 if pending and not own/admin, or cross-household.                                       |
+| PATCH  | `/cookbook/recipes/{id}`            | bearer:admin | Edit any field including `status`. 404 cross-household.                                                |
+| DELETE | `/cookbook/recipes/{id}`            | bearer:admin | Hard delete.                                                                                           |
+| POST   | `/cookbook/recipes/{id}/approve`    | bearer:admin | Flip pending → approved. Idempotent (re-call on approved returns 200).                                 |
+| POST   | `/cookbook/recipes/generate`        | bearer       | AI generate. Persists as `source='ai_generated'`, `status='pending'`. 502 on total agent failure.      |
+| POST   | `/cookbook/recipes/extract-photo`   | bearer       | AI photo extract. Persists as `source='photo'`, `status='pending'`. Partial extractions annotated.     |
 
 Refresh is handled by the Supabase JS SDK on the client — there is no `/auth/refresh` endpoint on the backend.
 
@@ -408,6 +416,7 @@ Integration tests against a real Supabase project (no mocking the DB):
   - **Self profile + health preferences:** any household member can `PATCH /me/profile` (`display_name`, `email`) and `PATCH /me/health-preferences` (per-user dietary toggles, JSONB-backed). Health prefs are strictly self-managed — there is no admin endpoint to set them on another user. Admins additionally get `PATCH /household/members/{id}` to fix a member's name/email (mirrors the existing password-reset endpoint).
   - **Low-stock flags:** any household member can create/list/delete low-stock flags (`/low-stock/*`). One flag per name per household — re-flagging an already-flagged name (by anyone) → 409. Delete is open to every member, not just the creator, since the panel is a shared shopping signal.
   - **Stores:** admin-managed, family-readable. Admin creates/updates/deletes stores (`POST/PATCH/DELETE /stores`); any household member can `GET /stores`. One store per name per household (case-insensitive). URLs are normalized (`carrefour.ae` → `https://carrefour.ae/`).
+  - **Cookbook recipes:** any household member can create (manual, AI generate, photo extract) and list recipes. Manual entries auto-approve; AI/photo entries enter as `status='pending'` and require an admin to call `POST /cookbook/recipes/{id}/approve` before they appear in the family-wide cookbook. The submitter sees their own pending row; other family members do not. Admin can `?status=pending` to see the household review queue.
 - Do you want admins to be able to **transfer ownership** of a household? (Out of scope for v1 unless you say otherwise.)
 - Do you want **soft-delete** of family members (keep history) or hard-delete? Spec assumes hard-delete via `on delete cascade`.
 - Followup: today `_admin_household_id` reads role from `public.users`, not the JWT. Combined with the 0003 `with check`, the privilege escalation is closed. Worth refactoring role checks to read exclusively from the signed JWT.

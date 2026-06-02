@@ -2,18 +2,20 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-# The image-analysis agent lives in `ai_agents/image-agent/`. Python can't
-# import through that folder name directly because the hyphen is a syntax
-# error (parsed as subtraction). We add the folder itself to sys.path so the
-# `image_agent.py` file inside resolves as a top-level module. Drop this
-# block if the AI team ever renames the folder to `image_agent` (underscore).
-_AGENT_DIR = Path(__file__).resolve().parents[2] / "ai_agents" / "image-agent"
-if _AGENT_DIR.is_dir() and str(_AGENT_DIR) not in sys.path:
-    sys.path.insert(0, str(_AGENT_DIR))
+# AI agents live in hyphenated folders under `ai_agents/`. Python can't
+# import through those folder names directly (hyphen is parsed as subtraction).
+# We add each folder to sys.path so the underscored `*_agent.py` files inside
+# resolve as top-level modules. Drop a folder from this list once the AI team
+# repackages it with an underscored folder name.
+for _folder in ("image-agent", "cookbook-agent", "recipe-photo-agent"):
+    _p = Path(__file__).resolve().parents[2] / "ai_agents" / _folder
+    if _p.is_dir() and str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 from fastapi import FastAPI
 
 from .auth.router import router as auth_router
+from .cookbook.router import router as cookbook_router
 from .household.router import router as household_router
 from .items.router import router as items_router
 from .logging_setup import configure_logging
@@ -55,6 +57,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(auth_router)
+app.include_router(cookbook_router)
 app.include_router(household_router)
 app.include_router(items_router)
 app.include_router(low_stock_router)

@@ -63,6 +63,14 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | POST   | `/items/{id}/status` | bearer | Transition `status`. Family may set `done` or undo `done→pending`; admin only for `in_review`/`approved`/`rejected` and reopening `rejected→pending`. |
 | DELETE | `/items/{id}` | bearer | Delete. Creator or any admin in the household. |
 | POST   | `/items/scan-image` | bearer | Run a product photo through the image-analysis agent. Pass-through — does not persist. Always 200; failures live in `reason`. |
+| GET    | `/cookbook/recipes` | bearer | List recipes. Default scope: approved + caller's own pending. Filters: `tag`, `search`, `source`, `status`. |
+| POST   | `/cookbook/recipes` | bearer | Manual entry → `source='manual'`, `status='approved'` (auto-approved). |
+| GET    | `/cookbook/recipes/{id}` | bearer | Fetch one. 404 if pending and not own/admin, or cross-household. |
+| PATCH  | `/cookbook/recipes/{id}` | bearer:admin | Edit any field including `status`. |
+| DELETE | `/cookbook/recipes/{id}` | bearer:admin | Hard delete. |
+| POST   | `/cookbook/recipes/{id}/approve` | bearer:admin | Flip a pending recipe to approved. Idempotent. |
+| POST   | `/cookbook/recipes/generate` | bearer | AI generate via cookbook agent → `source='ai_generated'`, `status='pending'`. 502 on total agent failure. |
+| POST   | `/cookbook/recipes/extract-photo` | bearer | AI photo extract → `source='photo'`, `status='pending'`. Partial extractions saved with reason annotated; 502 only on no-name failure. |
 | POST   | `/low-stock` | bearer | Flag an item as running low. 409 if the name is already flagged in this household (any member). |
 | GET    | `/low-stock` | bearer | List the caller's household flags, newest first. Each row includes `added_by_display_name`. |
 | DELETE | `/low-stock/{flag_id}` | bearer | Clear a flag. Any household member may delete any flag. |
@@ -77,6 +85,7 @@ Image-scan endpoint (pass-through to the AI agent): [docs/scan-image-flow.md](..
 Low-stock flags (per-household, name-unique): [docs/low-stock-flow.md](../docs/low-stock-flow.md).
 Stores (admin-managed, family-readable): [docs/stores-flow.md](../docs/stores-flow.md).
 Profile + health-preferences flow: [docs/profile-flow.md](../docs/profile-flow.md).
+Cookbook (manual auto-approved; AI/photo pending → admin approve): [docs/cookbook-flow.md](../docs/cookbook-flow.md).
 
 **Refresh** is intentionally **not** an endpoint here — the mobile client uses the Supabase JS SDK to refresh access tokens automatically. See [docs/auth-flow.md](../docs/auth-flow.md#token-refresh-handled-by-the-sdk).
 
@@ -96,6 +105,7 @@ Run migrations in order in the Supabase SQL Editor:
 5. [supabase/migrations/0005_user_profile_and_health_prefs.sql](../supabase/migrations/0005_user_profile_and_health_prefs.sql) — adds `public.users.health_preferences jsonb not null default '{}'::jsonb`. Application-level schema in [backend/app/me/schemas.py](app/me/schemas.py) pins the known toggle keys.
 6. [supabase/migrations/0006_init_low_stock.sql](../supabase/migrations/0006_init_low_stock.sql) — `public.low_stock_flags` + unique `(household_id, lower(name))` + GRANTs + same-household SELECT RLS + `updated_at` trigger.
 7. [supabase/migrations/0007_init_stores.sql](../supabase/migrations/0007_init_stores.sql) — `public.stores` + unique `(household_id, lower(name))` + GRANTs + same-household SELECT RLS + `updated_at` trigger.
+8. [supabase/migrations/0008_init_cookbook.sql](../supabase/migrations/0008_init_cookbook.sql) — `public.recipes` + `recipe_source` / `recipe_status` enums + GRANTs + RLS (approved-or-own-pending) + `updated_at` trigger.
 
 0001 creates:
 - `public.households`, `public.users` with FKs into `auth.users`

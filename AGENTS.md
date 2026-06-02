@@ -48,6 +48,9 @@ backend/
     household/
       router.py        # /household/members/* endpoints
       schemas.py
+    cookbook/
+      router.py        # /cookbook/* — manual / AI-generated / photo-extracted recipes
+      schemas.py
     items/
       router.py        # /items/* — per-household shopping/inventory list
       schemas.py
@@ -63,6 +66,7 @@ backend/
   tests/
     conftest.py        # skip-if-unconfigured, real-Supabase fixtures
     test_auth.py       # §10 test plan
+    test_cookbook.py   # cookbook CRUD + AI generate + photo extract + approval flow
     test_items.py      # items CRUD + status transitions + permissions
     test_low_stock.py  # low-stock flag CRUD + uniqueness
     test_me.py         # self profile updates + health preferences
@@ -81,9 +85,11 @@ supabase/
     0005_user_profile_and_health_prefs.sql   # adds users.health_preferences jsonb
     0006_init_low_stock.sql                  # low_stock_flags table + unique (household, lower(name))
     0007_init_stores.sql                     # stores table + unique (household, lower(name)) + RLS
+    0008_init_cookbook.sql                   # recipes table + recipe_source/recipe_status enums + RLS
 
 docs/
   auth-flow.md         # runtime sequences, SDK refresh, failure modes
+  cookbook-flow.md     # cookbook endpoints, manual-vs-AI approval split, 502 semantics
   items-flow.md        # items endpoints, permission matrix, status state machine
   low-stock-flow.md    # low-stock flags, uniqueness, open-delete rule
   profile-flow.md      # self profile + health-preferences + admin member-patch
@@ -94,6 +100,10 @@ ai_agents/             # ↑ NOT under backend/. Independent Python files owned 
   image-agent/         # Hyphenated folder; backend's main.py adds this to sys.path on boot.
     image_agent.py     # analyze_product_image() — called by POST /items/scan-image
     BACKEND_CONTRACT.md
+  cookbook-agent/      # Hyphenated folder; same sys.path treatment.
+    cookbook_agent.py  # generate_recipe(), personalize_recipe_description() — called by /cookbook/recipes/generate
+  recipe-photo-agent/  # Hyphenated folder; same sys.path treatment.
+    recipe_photo_agent.py  # extract_recipe_from_image() — called by /cookbook/recipes/extract-photo
 ```
 
 ---
@@ -144,6 +154,16 @@ If you find existing code that violates one of these, **flag it; do not silently
 `POST /items/scan-image` is deliberately a **pure pass-through** to the agent in [ai_agents/image-agent/](ai_agents/image-agent/). It must never write to `public.items`, never log scanned content, never store the image. The user reviews the agent's result on the mobile confirmation screen and then calls `POST /items` separately to actually save. Coupling scan + create here would skip that confirmation step and break the UX the contract assumes.
 
 The handler is also responsible for catching `ImportError` and returning **503** rather than crashing — the rest of the API must boot even if `ai_agents/image-agent/` isn't checked out (e.g. partial deployments). See [docs/scan-image-flow.md](docs/scan-image-flow.md).
+
+---
+
+## Cookbook AI endpoints: writes happen here — 502 on failure (not 200-with-reason)
+
+`POST /cookbook/recipes/generate` and `POST /cookbook/recipes/extract-photo` **persist a row** on success. They diverge from the scan-image "always 200" pattern: a **total agent failure** (`reason` set, no usable `name`) returns **502** with no insert. Partial photo extractions (name present, `reason` describes what was lost) still 201 — the description gets an "Extraction note:" suffix. AGENT IMPORT is module-level in [cookbook/router.py](backend/app/cookbook/router.py), not lazy — the server should fail fast on signature drift, not at the first user request. Don't move those imports inside the handlers. See [docs/cookbook-flow.md](docs/cookbook-flow.md).
+
+Two other invariants that must not silently relax:
+- **Manual recipes are auto-approved; AI/photo recipes are pending.** The approval gate exists because LLM output is sometimes wrong. Removing it bypasses the human review step the product depends on.
+- **Pending recipes are visible to submitter + admin only.** If you change the GET filter, make sure it still returns 404 (not 403) when a non-submitter family member asks for someone else's pending row — existence must not leak.
 
 ---
 
