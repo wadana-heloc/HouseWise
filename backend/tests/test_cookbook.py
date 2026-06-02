@@ -102,7 +102,7 @@ def patch_photo_agent(monkeypatch):
 
 # ---------- Manual create ----------
 
-def test_manual_create_is_approved(client, sb, created_users):
+def test_admin_manual_create_is_approved(client, sb, created_users):
     admin = _signup_admin(client, created_users)
     r = _post(client, admin["access_token"])
     assert r.status_code == 201, r.text
@@ -111,6 +111,18 @@ def test_manual_create_is_approved(client, sb, created_users):
     assert body["status"] == "approved"
     assert body["submitted_by"] == admin["user_id"]
     assert body["household_id"] == admin["household_id"]
+
+
+def test_family_manual_create_is_pending(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, member)
+    r = _post(client, fam_token)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["source"] == "manual"
+    assert body["status"] == "pending"
+    assert body["submitted_by"] == member["user_id"]
 
 
 def test_manual_create_empty_name_returns_422(client, created_users):
@@ -141,7 +153,7 @@ def test_family_sees_approved_and_own_pending(
     member = _create_member(client, admin["access_token"], created_users)
     fam_token = _member_token(client, member)
 
-    # Family manual recipe -> approved (visible to admin too).
+    # Family manual recipe -> pending (only submitter + admin see it).
     fam_manual = _post(client, fam_token, _basic_recipe_payload(name="Fam manual")).json()
 
     # Family AI recipe -> pending (visible only to submitter + admin).

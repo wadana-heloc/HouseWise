@@ -146,15 +146,16 @@ def list_recipes(
     summary="Add a recipe manually",
 )
 def create_recipe(body: RecipeCreate, user: CurrentUser = Depends(current_user)):
-    """Manual recipe entry. Server forces `source='manual'`,
-    `status='approved'` (typed by a human, no AI review needed), and
-    `submitted_by=caller.id`. Visible to the whole household immediately.
+    """Manual recipe entry. Server forces `source='manual'` and
+    `submitted_by=caller.id`. Status depends on role: admin manual entries
+    auto-approve (visible household-wide immediately); family manual entries
+    enter as `'pending'` and need an admin approve, same as AI/photo.
 
     Errors: 401 missing/invalid bearer. 403 caller is not in a household.
     422 invalid body (empty name, bad ingredient category, etc.).
     """
     sb = get_supabase()
-    household_id, _ = _caller_household(sb, user.id)
+    household_id, role = _caller_household(sb, user.id)
 
     payload = {
         "household_id": household_id,
@@ -166,7 +167,7 @@ def create_recipe(body: RecipeCreate, user: CurrentUser = Depends(current_user))
         "prep_minutes": body.prep_minutes,
         "servings": body.servings,
         "source": "manual",
-        "status": "approved",
+        "status": "approved" if role == "admin" else "pending",
         "submitted_by": user.id,
     }
     return _insert_recipe(sb, payload)

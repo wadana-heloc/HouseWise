@@ -172,7 +172,7 @@ The handler is also responsible for catching `ImportError` and returning **503**
 `POST /meal-plan/generate` applies the same rule (second site in the codebase): total agent failure → 502, no row inserted; `len(days) != 7` is also treated as failure. Module-level import in [meal_plan/router.py](backend/app/meal_plan/router.py). See [docs/meal-plan-flow.md](docs/meal-plan-flow.md).
 
 Two other invariants that must not silently relax:
-- **Manual recipes are auto-approved; AI/photo recipes are pending.** The approval gate exists because LLM output is sometimes wrong. Removing it bypasses the human review step the product depends on.
+- **Admin manual entries auto-approve; everything else is pending.** Admin's own AI/photo output is still pending (LLM output is the failure mode). Family entries are always pending regardless of path (manual / AI / photo) — the gate is *who*, not *how*. Removing this lets family bypass admin review with a deliberate manual entry.
 - **Pending recipes are visible to submitter + admin only.** If you change the GET filter, make sure it still returns 404 (not 403) when a non-submitter family member asks for someone else's pending row — existence must not leak.
 
 ---

@@ -25,7 +25,7 @@ AI agent functions live outside the backend tree under [ai_agents/cookbook-agent
 | Method | Path | Caller | Body | Notes |
 | --- | --- | --- | --- | --- |
 | GET | `/cookbook/recipes` | any member | — | Query params: `tag`, `search` (ilike on name), `source`, `status`. Default scope: approved + own pending. |
-| POST | `/cookbook/recipes` | any member | `RecipeCreate` | Manual entry → `source='manual'`, `status='approved'`. |
+| POST | `/cookbook/recipes` | any member | `RecipeCreate` | Manual entry → `source='manual'`. Admin caller → `status='approved'`; family caller → `status='pending'` (admin must approve). |
 | GET | `/cookbook/recipes/{id}` | any member | — | 404 cross-household; 404 if pending and not own/admin. |
 | PATCH | `/cookbook/recipes/{id}` | admin | `RecipeUpdate` (≥1 field) | Edit any field including `status`. |
 | DELETE | `/cookbook/recipes/{id}` | admin | — | Hard delete. |
@@ -37,20 +37,27 @@ AI agent functions live outside the backend tree under [ai_agents/cookbook-agent
 
 ## Approval workflow
 
-Two paths, one gate:
+One gate. The split is by **caller role**, not by entry method:
 
 ```
-Manual entry ─────────────────────────────────► status='approved' (visible to all)
+Admin (any path: manual / AI / photo) ──► status='approved' ──► visible to all
+                                            (manual)         (AI/photo still pending — see below)
 
-AI generate / photo extract ──► status='pending' ──► admin approves ──► visible to all
-                                       │
-                                       └► visible to submitter + admin only
+Family (any path: manual / AI / photo) ──► status='pending' ──► admin approves ──► visible to all
+                                                  │
+                                                  └► visible to submitter + admin only
 ```
 
-**Why this split:**
+Detailed combinations:
 
-- Manual: a human typed the recipe. They are their own reviewer. No friction.
-- AI / photo: machine output is wrong sometimes. Admin scans the household pending queue (`GET /cookbook/recipes?status=pending`) and approves the good ones, deletes the rest.
+| Caller | Path | Resulting status |
+| --- | --- | --- |
+| Admin | manual | `approved` |
+| Admin | AI generate / photo extract | `pending` (admin reviews their own AI output too — the LLM output is the failure mode, not the human typing) |
+| Family | manual | `pending` |
+| Family | AI generate / photo extract | `pending` |
+
+**Why family-manual is also pending:** the previous rule ("the human typing it is their own reviewer") was right for admins but lets family bypass the approval queue with a deliberate manual entry, defeating the whole purpose of the gate. Admin sees every family submission regardless of path.
 
 **The submitter sees their own pending row** so they can preview and delete bad output before bothering an admin. Other family members don't see it (the SELECT policy filters on `submitted_by = auth.uid()` for non-approved rows).
 
@@ -124,7 +131,7 @@ Partial photo extractions still 201 because there IS a row — the description j
 
 | Action | admin | family (submitter) | family (other) |
 | --- | :---: | :---: | :---: |
-| Create manual (auto-approved) | ✓ | ✓ | ✓ |
+| Create manual (admin → approved; family → pending) | ✓ | ✓ | ✓ |
 | Create via AI generate | ✓ | ✓ | ✓ |
 | Create via photo extract | ✓ | ✓ | ✓ |
 | List approved recipes | ✓ | ✓ | ✓ |

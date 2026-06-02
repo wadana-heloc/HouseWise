@@ -64,7 +64,7 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | DELETE | `/items/{id}` | bearer | Delete. Creator or any admin in the household. |
 | POST   | `/items/scan-image` | bearer | Run a product photo through the image-analysis agent. Pass-through — does not persist. Always 200; failures live in `reason`. |
 | GET    | `/cookbook/recipes` | bearer | List recipes. Default scope: approved + caller's own pending. Filters: `tag`, `search`, `source`, `status`. |
-| POST   | `/cookbook/recipes` | bearer | Manual entry → `source='manual'`, `status='approved'` (auto-approved). |
+| POST   | `/cookbook/recipes` | bearer | Manual entry → `source='manual'`. Admin caller → `status='approved'`; family caller → `status='pending'` (admin must approve). |
 | GET    | `/cookbook/recipes/{id}` | bearer | Fetch one. 404 if pending and not own/admin, or cross-household. |
 | PATCH  | `/cookbook/recipes/{id}` | bearer:admin | Edit any field including `status`. |
 | DELETE | `/cookbook/recipes/{id}` | bearer:admin | Hard delete. |
@@ -91,7 +91,7 @@ Image-scan endpoint (pass-through to the AI agent): [docs/scan-image-flow.md](..
 Low-stock flags (per-household, name-unique): [docs/low-stock-flow.md](../docs/low-stock-flow.md).
 Stores (admin-managed, family-readable): [docs/stores-flow.md](../docs/stores-flow.md).
 Profile + health-preferences flow: [docs/profile-flow.md](../docs/profile-flow.md).
-Cookbook (manual auto-approved; AI/photo pending → admin approve): [docs/cookbook-flow.md](../docs/cookbook-flow.md).
+Cookbook (admin manual auto-approved; everything else pending → admin approve): [docs/cookbook-flow.md](../docs/cookbook-flow.md).
 Meal plan (submissions + AI generate + day-edit; 502 on agent failure): [docs/meal-plan-flow.md](../docs/meal-plan-flow.md).
 
 **Refresh** is intentionally **not** an endpoint here — the mobile client uses the Supabase JS SDK to refresh access tokens automatically. See [docs/auth-flow.md](../docs/auth-flow.md#token-refresh-handled-by-the-sdk).
