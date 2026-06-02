@@ -64,13 +64,13 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | DELETE | `/items/{id}` | bearer | Delete. Creator or any admin in the household. |
 | POST   | `/items/scan-image` | bearer | Run a product photo through the image-analysis agent. Pass-through — does not persist. Always 200; failures live in `reason`. |
 | GET    | `/cookbook/recipes` | bearer | List recipes. Default scope: approved + caller's own pending. Filters: `tag`, `search`, `source`, `status`. |
-| POST   | `/cookbook/recipes` | bearer | Manual entry → `source='manual'`. Admin caller → `status='approved'`; family caller → `status='pending'` (admin must approve). |
+| POST   | `/cookbook/recipes` | bearer | Save a recipe (all three paths). Body `source` defaults to `manual`; FE sets `ai_generated` / `photo` after a preview. Status = admin → `approved`, family → `pending`. |
 | GET    | `/cookbook/recipes/{id}` | bearer | Fetch one. 404 if pending and not own/admin, or cross-household. |
 | PATCH  | `/cookbook/recipes/{id}` | bearer:admin | Edit any field including `status`. |
 | DELETE | `/cookbook/recipes/{id}` | bearer:admin | Hard delete. |
 | POST   | `/cookbook/recipes/{id}/approve` | bearer:admin | Flip a pending recipe to approved. Idempotent. |
-| POST   | `/cookbook/recipes/generate` | bearer | AI generate via cookbook agent → `source='ai_generated'`, `status='pending'`. 502 on total agent failure. |
-| POST   | `/cookbook/recipes/extract-photo` | bearer | AI photo extract → `source='photo'`, `status='pending'`. Partial extractions saved with reason annotated; 502 only on no-name failure. |
+| POST   | `/cookbook/recipes/generate` | bearer | **Pass-through preview** — calls the cookbook agent and returns a `RecipePreview` (no DB write). FE saves via `POST /cookbook/recipes` with `source='ai_generated'`. 502 on agent total failure. |
+| POST   | `/cookbook/recipes/extract-photo` | bearer | **Pass-through preview** — calls the photo agent and returns a `RecipePreview` (no DB write); partial extractions carry a `reason` field. FE saves via `POST /cookbook/recipes` with `source='photo'`. 502 only on no-name failure. |
 | POST   | `/low-stock` | bearer | Flag an item as running low. 409 if the name is already flagged in this household (any member). |
 | GET    | `/low-stock` | bearer | List the caller's household flags, newest first. Each row includes `added_by_display_name`. |
 | DELETE | `/low-stock/{flag_id}` | bearer | Clear a flag. Any household member may delete any flag. |
@@ -91,7 +91,7 @@ Image-scan endpoint (pass-through to the AI agent): [docs/scan-image-flow.md](..
 Low-stock flags (per-household, name-unique): [docs/low-stock-flow.md](../docs/low-stock-flow.md).
 Stores (admin-managed, family-readable): [docs/stores-flow.md](../docs/stores-flow.md).
 Profile + health-preferences flow: [docs/profile-flow.md](../docs/profile-flow.md).
-Cookbook (admin manual auto-approved; everything else pending → admin approve): [docs/cookbook-flow.md](../docs/cookbook-flow.md).
+Cookbook (AI endpoints are pass-through previews; single save endpoint; admin saves → approved, family saves → pending): [docs/cookbook-flow.md](../docs/cookbook-flow.md).
 Meal plan (submissions + AI generate + day-edit; 502 on agent failure): [docs/meal-plan-flow.md](../docs/meal-plan-flow.md).
 
 **Refresh** is intentionally **not** an endpoint here — the mobile client uses the Supabase JS SDK to refresh access tokens automatically. See [docs/auth-flow.md](../docs/auth-flow.md#token-refresh-handled-by-the-sdk).

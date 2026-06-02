@@ -146,66 +146,36 @@ def test_create_without_bearer_returns_401(client):
 
 # ---------- Read scope ----------
 
-def test_family_sees_approved_and_own_pending(
-    client, sb, created_users, patch_cookbook_agent
-):
+def test_family_sees_approved_and_own_pending(client, sb, created_users):
     admin = _signup_admin(client, created_users)
-    member = _create_member(client, admin["access_token"], created_users)
-    fam_token = _member_token(client, member)
+    member_a = _create_member(client, admin["access_token"], created_users, display_name="A")
+    member_b = _create_member(client, admin["access_token"], created_users, display_name="B")
+    tok_a = _member_token(client, member_a)
+    tok_b = _member_token(client, member_b)
 
-    # Family manual recipe -> pending (only submitter + admin see it).
-    fam_manual = _post(client, fam_token, _basic_recipe_payload(name="Fam manual")).json()
+    # Admin manual -> approved (visible to everyone).
+    admin_recipe = _post(client, admin["access_token"], _basic_recipe_payload(name="Admin manual")).json()
+    # Member A manual -> pending (visible to A + admin only).
+    a_recipe = _post(client, tok_a, _basic_recipe_payload(name="A manual")).json()
+    # Member B manual -> pending (visible to B + admin only).
+    b_recipe = _post(client, tok_b, _basic_recipe_payload(name="B manual")).json()
 
-    # Family AI recipe -> pending (visible only to submitter + admin).
-    patch_cookbook_agent.set(
-        name="Fam AI", description="d", ingredients=[
-            {"name": "x", "quantity": "1", "unit": "g", "category": "pantry"}
-        ],
-    )
-    fam_ai = client.post(
-        "/cookbook/recipes/generate",
-        headers={"Authorization": f"Bearer {fam_token}"},
-        json={"prompt": "anything", "tag_hints": []},
-    ).json()
-
-    # Admin pending recipe (admin's own AI gen).
-    patch_cookbook_agent.set(
-        name="Admin AI", description="d", ingredients=[
-            {"name": "y", "quantity": "1", "unit": "g", "category": "pantry"}
-        ],
-    )
-    admin_ai = client.post(
-        "/cookbook/recipes/generate",
-        headers={"Authorization": f"Bearer {admin['access_token']}"},
-        json={"prompt": "anything", "tag_hints": []},
-    ).json()
-
-    # Family GET default: own pending + approved manual; NOT admin's pending.
-    fam_list = client.get(
+    a_list = client.get(
         "/cookbook/recipes",
-        headers={"Authorization": f"Bearer {fam_token}"},
+        headers={"Authorization": f"Bearer {tok_a}"},
     ).json()["recipes"]
-    fam_ids = {r["id"] for r in fam_list}
-    assert fam_manual["id"] in fam_ids
-    assert fam_ai["id"] in fam_ids
-    assert admin_ai["id"] not in fam_ids, "Admin's pending should not leak to family"
+    a_ids = {r["id"] for r in a_list}
+    assert admin_recipe["id"] in a_ids
+    assert a_recipe["id"] in a_ids
+    assert b_recipe["id"] not in a_ids, "B's pending must not leak to A"
 
 
-def test_admin_status_pending_filter_sees_household_queue(
-    client, sb, created_users, patch_cookbook_agent
-):
+def test_admin_status_pending_filter_sees_household_queue(client, sb, created_users):
     admin = _signup_admin(client, created_users)
     member = _create_member(client, admin["access_token"], created_users)
     fam_token = _member_token(client, member)
 
-    patch_cookbook_agent.set(
-        name="Fam pending", description=None, ingredients=[],
-    )
-    client.post(
-        "/cookbook/recipes/generate",
-        headers={"Authorization": f"Bearer {fam_token}"},
-        json={"prompt": "anything", "tag_hints": []},
-    )
+    _post(client, fam_token, _basic_recipe_payload(name="Fam pending"))
 
     pending = client.get(
         "/cookbook/recipes?status=pending",
@@ -226,19 +196,14 @@ def test_get_single_cross_household_returns_404(client, created_users):
     assert r.status_code == 404
 
 
-def test_get_other_members_pending_returns_404(client, created_users, patch_cookbook_agent):
+def test_get_other_members_pending_returns_404(client, created_users):
     admin = _signup_admin(client, created_users)
     m1 = _create_member(client, admin["access_token"], created_users)
     m2 = _create_member(client, admin["access_token"], created_users)
     t1 = _member_token(client, m1)
     t2 = _member_token(client, m2)
 
-    patch_cookbook_agent.set(name="m1 secret", ingredients=[])
-    rid = client.post(
-        "/cookbook/recipes/generate",
-        headers={"Authorization": f"Bearer {t1}"},
-        json={"prompt": "anything", "tag_hints": []},
-    ).json()["id"]
+    rid = _post(client, t1, _basic_recipe_payload(name="m1 secret")).json()["id"]
 
     r = client.get(
         f"/cookbook/recipes/{rid}",
@@ -355,14 +320,12 @@ def test_non_uuid_recipe_id_returns_422(client, created_users):
 
 # ---------- Approve ----------
 
-def test_admin_approves_pending(client, created_users, patch_cookbook_agent):
+def test_admin_approves_pending(client, created_users):
     admin = _signup_admin(client, created_users)
-    patch_cookbook_agent.set(name="Needs approval", ingredients=[])
-    rid = client.post(
-        "/cookbook/recipes/generate",
-        headers={"Authorization": f"Bearer {admin['access_token']}"},
-        json={"prompt": "anything", "tag_hints": []},
-    ).json()["id"]
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, member)
+    # Family manual is pending; admin approves.
+    rid = _post(client, fam_token, _basic_recipe_payload(name="Needs approval")).json()["id"]
 
     r = client.post(
         f"/cookbook/recipes/{rid}/approve",
@@ -384,16 +347,11 @@ def test_approve_is_idempotent(client, created_users):
     assert r.json()["status"] == "approved"
 
 
-def test_family_cannot_approve(client, created_users, patch_cookbook_agent):
+def test_family_cannot_approve(client, created_users):
     admin = _signup_admin(client, created_users)
     member = _create_member(client, admin["access_token"], created_users)
     fam_token = _member_token(client, member)
-    patch_cookbook_agent.set(name="Theirs", ingredients=[])
-    rid = client.post(
-        "/cookbook/recipes/generate",
-        headers={"Authorization": f"Bearer {fam_token}"},
-        json={"prompt": "x", "tag_hints": []},
-    ).json()["id"]
+    rid = _post(client, fam_token, _basic_recipe_payload(name="Theirs")).json()["id"]
 
     r = client.post(
         f"/cookbook/recipes/{rid}/approve",
@@ -413,75 +371,134 @@ def test_approve_cross_household_returns_404(client, created_users):
     assert r.status_code == 404
 
 
-# ---------- AI generate ----------
+# ---------- AI generate (pass-through preview — does NOT persist) ----------
 
-def test_generate_as_family_creates_pending(client, created_users, patch_cookbook_agent):
+def test_generate_returns_preview_no_row(client, sb, created_users, patch_cookbook_agent):
     admin = _signup_admin(client, created_users)
-    member = _create_member(client, admin["access_token"], created_users)
-    fam_token = _member_token(client, member)
     patch_cookbook_agent.set(
         name="AI pasta", description="d",
         ingredients=[{"name": "x", "quantity": "1", "unit": "g", "category": "pantry"}],
         tags=["quick"], prep_minutes=15, servings=2,
     )
-    r = client.post(
-        "/cookbook/recipes/generate",
-        headers={"Authorization": f"Bearer {fam_token}"},
-        json={"prompt": "kid friendly pasta", "tag_hints": ["quick"]},
+    before = (
+        sb.table("recipes")
+        .select("id", count="exact")
+        .eq("household_id", admin["household_id"])
+        .execute()
     )
-    assert r.status_code == 201, r.text
-    body = r.json()
-    assert body["source"] == "ai_generated"
-    assert body["status"] == "pending"
-    assert body["submitted_by"] == member["user_id"]
-
-
-def test_generate_as_admin_also_pending(client, created_users, patch_cookbook_agent):
-    admin = _signup_admin(client, created_users)
-    patch_cookbook_agent.set(name="Admin AI", ingredients=[])
     r = client.post(
         "/cookbook/recipes/generate",
         headers={"Authorization": f"Bearer {admin['access_token']}"},
-        json={"prompt": "anything", "tag_hints": []},
+        json={"prompt": "kid friendly pasta", "tag_hints": ["quick"]},
     )
-    assert r.status_code == 201
-    assert r.json()["status"] == "pending"
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["source"] == "ai_generated"
+    assert body["name"] == "AI pasta"
+    assert "id" not in body and "status" not in body, "preview must not look like a saved row"
+    after = (
+        sb.table("recipes")
+        .select("id", count="exact")
+        .eq("household_id", admin["household_id"])
+        .execute()
+    )
+    assert (after.count or 0) == (before.count or 0), "preview must not persist a row"
 
 
-def test_generate_total_failure_returns_502_no_row(client, sb, created_users, patch_cookbook_agent):
+def test_generate_total_failure_returns_502(client, sb, created_users, patch_cookbook_agent):
     admin = _signup_admin(client, created_users)
     patch_cookbook_agent.set(name=None, reason="agent rate-limited")
-    before = sb.table("recipes").select("id", count="exact").eq("household_id", admin["household_id"]).execute()
+    before = (
+        sb.table("recipes")
+        .select("id", count="exact")
+        .eq("household_id", admin["household_id"])
+        .execute()
+    )
     r = client.post(
         "/cookbook/recipes/generate",
         headers={"Authorization": f"Bearer {admin['access_token']}"},
         json={"prompt": "anything", "tag_hints": []},
     )
     assert r.status_code == 502
-    after = sb.table("recipes").select("id", count="exact").eq("household_id", admin["household_id"]).execute()
-    assert (after.count or 0) == (before.count or 0), "502 must not persist a row"
+    after = (
+        sb.table("recipes")
+        .select("id", count="exact")
+        .eq("household_id", admin["household_id"])
+        .execute()
+    )
+    assert (after.count or 0) == (before.count or 0)
 
 
-# ---------- AI photo extract ----------
+def test_admin_save_ai_preview_is_approved(client, created_users):
+    """Admin POSTs the AI preview back via /recipes with source='ai_generated';
+    role-based status logic gives them approved immediately."""
+    admin = _signup_admin(client, created_users)
+    payload = _basic_recipe_payload(name="From AI preview")
+    payload["source"] = "ai_generated"
+    r = client.post(
+        "/cookbook/recipes",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json=payload,
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["source"] == "ai_generated"
+    assert body["status"] == "approved"
 
-def test_extract_photo_full_success(client, created_users, patch_photo_agent):
+
+def test_family_save_ai_preview_is_pending(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, member)
+    payload = _basic_recipe_payload(name="Fam AI preview")
+    payload["source"] = "ai_generated"
+    r = client.post(
+        "/cookbook/recipes",
+        headers={"Authorization": f"Bearer {fam_token}"},
+        json=payload,
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["source"] == "ai_generated"
+    assert body["status"] == "pending"
+
+
+# ---------- AI photo extract (pass-through preview — does NOT persist) ----------
+
+def test_extract_photo_full_success(client, sb, created_users, patch_photo_agent):
     admin = _signup_admin(client, created_users)
     patch_photo_agent.set(
         name="Scanned recipe", description="from a book",
         ingredients=[{"name": "x", "quantity": "1", "unit": "g", "category": "pantry"}],
+    )
+    before = (
+        sb.table("recipes")
+        .select("id", count="exact")
+        .eq("household_id", admin["household_id"])
+        .execute()
     )
     r = client.post(
         "/cookbook/recipes/extract-photo",
         headers={"Authorization": f"Bearer {admin['access_token']}"},
         json={"image_base64": "abc", "media_type": "image/jpeg"},
     )
-    assert r.status_code == 201, r.text
+    assert r.status_code == 200, r.text
     body = r.json()
     assert body["source"] == "photo"
-    assert body["status"] == "pending"
+    assert body["name"] == "Scanned recipe"
+    assert body.get("reason") is None
+    after = (
+        sb.table("recipes")
+        .select("id", count="exact")
+        .eq("household_id", admin["household_id"])
+        .execute()
+    )
+    assert (after.count or 0) == (before.count or 0)
 
 
-def test_extract_photo_partial_annotates_description(client, created_users, patch_photo_agent):
+def test_extract_photo_partial_exposes_reason(client, created_users, patch_photo_agent):
+    """Partial extraction → 200 with `reason` set; description is NOT auto-annotated
+    (FE decides how to render the warning)."""
     admin = _signup_admin(client, created_users)
     patch_photo_agent.set(
         name="Partial", description="A short desc",
@@ -493,19 +510,32 @@ def test_extract_photo_partial_annotates_description(client, created_users, patc
         headers={"Authorization": f"Bearer {admin['access_token']}"},
         json={"image_base64": "abc", "media_type": "image/jpeg"},
     )
-    assert r.status_code == 201
-    assert "Extraction note: ingredient quantities were unreadable" in r.json()["description"]
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reason"] == "ingredient quantities were unreadable"
+    assert body["description"] == "A short desc"
+    assert "Extraction note" not in (body["description"] or "")
 
 
 def test_extract_photo_total_failure_returns_502(client, sb, created_users, patch_photo_agent):
     admin = _signup_admin(client, created_users)
     patch_photo_agent.set(name=None, reason="No text detected in image")
-    before = sb.table("recipes").select("id", count="exact").eq("household_id", admin["household_id"]).execute()
+    before = (
+        sb.table("recipes")
+        .select("id", count="exact")
+        .eq("household_id", admin["household_id"])
+        .execute()
+    )
     r = client.post(
         "/cookbook/recipes/extract-photo",
         headers={"Authorization": f"Bearer {admin['access_token']}"},
         json={"image_base64": "abc", "media_type": "image/jpeg"},
     )
     assert r.status_code == 502
-    after = sb.table("recipes").select("id", count="exact").eq("household_id", admin["household_id"]).execute()
+    after = (
+        sb.table("recipes")
+        .select("id", count="exact")
+        .eq("household_id", admin["household_id"])
+        .execute()
+    )
     assert (after.count or 0) == (before.count or 0)

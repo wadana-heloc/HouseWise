@@ -19,6 +19,7 @@ from .schemas import (
     RecipeCreate,
     RecipeList,
     RecipeOut,
+    RecipePreview,
     RecipeSource,
     RecipeStatus,
     RecipeUpdate,
@@ -146,13 +147,20 @@ def list_recipes(
     summary="Add a recipe manually",
 )
 def create_recipe(body: RecipeCreate, user: CurrentUser = Depends(current_user)):
-    """Manual recipe entry. Server forces `source='manual'` and
-    `submitted_by=caller.id`. Status depends on role: admin manual entries
-    auto-approve (visible household-wide immediately); family manual entries
-    enter as `'pending'` and need an admin approve, same as AI/photo.
+    """Persist a recipe. The FE uses this for all three paths:
+
+    - Manual entry: body.source defaults to `'manual'`.
+    - AI generate preview save: FE sets `source='ai_generated'` after the user
+      confirms a `/recipes/generate` preview.
+    - Photo extract preview save: FE sets `source='photo'` after a
+      `/recipes/extract-photo` preview.
+
+    Status depends on caller role, not on source: admin → `'approved'` (the
+    human reviewed before clicking save); family → `'pending'` (admin still
+    gates family contributions regardless of path).
 
     Errors: 401 missing/invalid bearer. 403 caller is not in a household.
-    422 invalid body (empty name, bad ingredient category, etc.).
+    422 invalid body (empty name, bad ingredient category, bad source enum).
     """
     sb = get_supabase()
     household_id, role = _caller_household(sb, user.id)
@@ -166,7 +174,7 @@ def create_recipe(body: RecipeCreate, user: CurrentUser = Depends(current_user))
         "tags": body.tags,
         "prep_minutes": body.prep_minutes,
         "servings": body.servings,
-        "source": "manual",
+        "source": body.source,
         "status": "approved" if role == "admin" else "pending",
         "submitted_by": user.id,
     }
@@ -278,20 +286,21 @@ def approve_recipe(
 
 @router.post(
     "/recipes/generate",
-    response_model=RecipeOut,
-    status_code=status.HTTP_201_CREATED,
-    summary="Generate a recipe via AI (any household member)",
+    response_model=RecipePreview,
+    summary="Generate a recipe preview via AI (pass-through, no DB write)",
 )
 async def generate(body: GenerateRecipeRequest, user: CurrentUser = Depends(current_user)):
-    """Call the cookbook agent to generate a recipe from a prompt + tag hints.
+    """Call the cookbook agent and return the result for the FE to render on
+    a review screen. **Nothing is persisted.** The user edits / accepts on
+    the screen, then the FE calls `POST /cookbook/recipes` with
+    `source='ai_generated'` to save a single row. If the user cancels, no
+    row is ever written.
 
-    Open to any authenticated household member. The generated recipe is
-    saved as `source='ai_generated'`, `status='pending'` — visible only to
-    the submitter and admin until an admin approves it.
+    Open to any authenticated household member.
 
     Errors: 401 missing/invalid bearer. 403 caller is not in a household.
-    422 invalid body. 502 the agent returned an error with no usable recipe;
-    no row is inserted.
+    422 invalid body. 502 the agent returned no usable recipe (`reason` set,
+    `name` absent).
     """
     sb = get_supabase()
     household_id, _ = _caller_household(sb, user.id)
@@ -302,72 +311,64 @@ async def generate(body: GenerateRecipeRequest, user: CurrentUser = Depends(curr
     }
     result = await run_in_threadpool(generate_recipe, body.prompt, household_context)
 
-    if result.get("reason") and not result.get("name"):
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, result["reason"])
+    if not result.get("name"):
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            result.get("reason") or "Recipe generation failed",
+        )
 
-    payload = {
-        "household_id": household_id,
-        "name": result.get("name") or "Untitled recipe",
-        "description": result.get("description"),
-        "ingredients": result.get("ingredients") or [],
-        "instructions": result.get("instructions"),
-        "tags": result.get("tags") or [],
-        "prep_minutes": result.get("prep_minutes"),
-        "servings": result.get("servings"),
-        "source": "ai_generated",
-        "status": "pending",
-        "submitted_by": user.id,
-    }
-    return _insert_recipe(sb, payload)
+    return RecipePreview(
+        name=result["name"],
+        description=result.get("description"),
+        ingredients=result.get("ingredients") or [],
+        instructions=result.get("instructions"),
+        tags=result.get("tags") or [],
+        prep_minutes=result.get("prep_minutes"),
+        servings=result.get("servings"),
+        source="ai_generated",
+        reason=result.get("reason"),
+    )
 
 
 @router.post(
     "/recipes/extract-photo",
-    response_model=RecipeOut,
-    status_code=status.HTTP_201_CREATED,
-    summary="Extract a recipe from a photo via AI",
+    response_model=RecipePreview,
+    summary="Extract a recipe preview from a photo (pass-through, no DB write)",
 )
 async def extract_photo(body: ExtractPhotoRequest, user: CurrentUser = Depends(current_user)):
-    """Call the recipe-photo agent to extract a recipe from a product /
-    cookbook page image. Open to any authenticated household member.
+    """Call the recipe-photo agent and return the extracted data for the FE
+    to render on a review screen. **Nothing is persisted.** The user edits /
+    accepts, then the FE calls `POST /cookbook/recipes` with `source='photo'`
+    to save a single row.
 
-    Partial extractions are saved with the agent's `reason` appended to the
-    description as an "Extraction note:". Total failures (no usable name)
-    return 502 without inserting a row.
+    Partial extractions return 200 with `reason` set so the FE can render a
+    warning above the editable preview ("we couldn't read the cook time").
+    Total failures (no usable name) return 502.
 
     Errors: 401 missing/invalid bearer. 403 caller is not in a household.
-    422 invalid body / oversized image. 502 total agent failure (no row).
+    422 invalid body / oversized image. 502 total agent failure.
     """
     sb = get_supabase()
-    household_id, _ = _caller_household(sb, user.id)
+    _caller_household(sb, user.id)
 
     result = await run_in_threadpool(
         extract_recipe_from_image, body.image_base64, body.media_type,
     )
 
     if not result.get("name"):
-        # Total failure shape per the contract: no name, only reason.
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             result.get("reason") or "Image extraction failed",
         )
 
-    description = result.get("description") or ""
-    if result.get("reason"):
-        suffix = f"\n\nExtraction note: {result['reason']}"
-        description = (description + suffix).strip()
-
-    payload = {
-        "household_id": household_id,
-        "name": result["name"],
-        "description": description or None,
-        "ingredients": result.get("ingredients") or [],
-        "instructions": result.get("instructions"),
-        "tags": result.get("tags") or [],
-        "prep_minutes": result.get("prep_minutes"),
-        "servings": result.get("servings"),
-        "source": "photo",
-        "status": "pending",
-        "submitted_by": user.id,
-    }
-    return _insert_recipe(sb, payload)
+    return RecipePreview(
+        name=result["name"],
+        description=result.get("description"),
+        ingredients=result.get("ingredients") or [],
+        instructions=result.get("instructions"),
+        tags=result.get("tags") or [],
+        prep_minutes=result.get("prep_minutes"),
+        servings=result.get("servings"),
+        source="photo",
+        reason=result.get("reason"),
+    )

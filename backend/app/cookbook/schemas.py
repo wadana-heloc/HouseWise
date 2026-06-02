@@ -24,6 +24,9 @@ class RecipeCreate(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=20)
     prep_minutes: Optional[int] = Field(default=None, gt=0)
     servings: Optional[int] = Field(default=None, gt=0)
+    # FE passes 'ai_generated' / 'photo' when saving a preview from
+    # /recipes/generate or /recipes/extract-photo; defaults to manual.
+    source: RecipeSource = "manual"
 
 
 class RecipeUpdate(BaseModel):
@@ -72,3 +75,25 @@ class GenerateRecipeRequest(BaseModel):
 class ExtractPhotoRequest(BaseModel):
     image_base64: str = Field(min_length=1, max_length=SCAN_IMAGE_MAX_BASE64)
     media_type: Literal["image/jpeg", "image/png", "image/webp"]
+
+
+class RecipePreview(BaseModel):
+    """AI-generated / photo-extracted recipe data — NOT yet persisted.
+
+    Returned by /cookbook/recipes/generate and /cookbook/recipes/extract-photo.
+    The FE shows this on a review screen; the user edits and then calls
+    POST /cookbook/recipes with `source` set to persist a single row. If the
+    user cancels the screen, nothing is written to the DB.
+    """
+
+    name: str
+    description: Optional[str] = None
+    ingredients: list[RecipeIngredient] = Field(default_factory=list)
+    instructions: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+    prep_minutes: Optional[int] = None
+    servings: Optional[int] = None
+    source: RecipeSource
+    # Populated on partial photo extraction (some fields were unreadable);
+    # null on full success. FE renders this as a warning above the preview.
+    reason: Optional[str] = None

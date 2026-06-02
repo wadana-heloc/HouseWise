@@ -165,11 +165,15 @@ The handler is also responsible for catching `ImportError` and returning **503**
 
 ---
 
-## Cookbook AI endpoints: writes happen here — 502 on failure (not 200-with-reason)
+## Cookbook AI endpoints are pass-through — DO NOT add persistence
 
-`POST /cookbook/recipes/generate` and `POST /cookbook/recipes/extract-photo` **persist a row** on success. They diverge from the scan-image "always 200" pattern: a **total agent failure** (`reason` set, no usable `name`) returns **502** with no insert. Partial photo extractions (name present, `reason` describes what was lost) still 201 — the description gets an "Extraction note:" suffix. AGENT IMPORT is module-level in [cookbook/router.py](backend/app/cookbook/router.py), not lazy — the server should fail fast on signature drift, not at the first user request. Don't move those imports inside the handlers. See [docs/cookbook-flow.md](docs/cookbook-flow.md).
+`POST /cookbook/recipes/generate` and `POST /cookbook/recipes/extract-photo` are **pure previews**: they call the agent and return a `RecipePreview` shape with no `id`, no `status`, no DB write. The FE renders the preview, the user edits / confirms, and the FE then calls `POST /cookbook/recipes` with `source='ai_generated'` or `source='photo'` to persist a single row. If the user cancels, nothing was ever written. Coupling the agent call with a write here re-introduces the double-write bug (one ghost `pending` row from the AI endpoint + the real save) — leave them as pass-through.
 
-`POST /meal-plan/generate` applies the same rule (second site in the codebase): total agent failure → 502, no row inserted; `len(days) != 7` is also treated as failure. Module-level import in [meal_plan/router.py](backend/app/meal_plan/router.py). See [docs/meal-plan-flow.md](docs/meal-plan-flow.md).
+Failure modes for the two AI endpoints: total agent failure (no `name` in the result) → **502**. Partial photo extraction (name present + `reason` describing what was lost) → 200 with `reason` populated on the preview; the FE renders the warning. Description is NOT auto-annotated server-side — the old "Extraction note:" suffix was removed when the endpoints became pass-through.
+
+Agent imports are module-level in [cookbook/router.py](backend/app/cookbook/router.py), not lazy — the server fails fast on signature drift rather than at the first user request. Don't move them inside the handlers. See [docs/cookbook-flow.md](docs/cookbook-flow.md).
+
+`POST /meal-plan/generate` is the one AI write endpoint that still persists: total agent failure → 502, no row inserted; `len(days) != 7` also treated as failure. Module-level import in [meal_plan/router.py](backend/app/meal_plan/router.py). See [docs/meal-plan-flow.md](docs/meal-plan-flow.md). When the day-detail / preview-then-save UI lands for meal plans, consider flipping that one to pass-through too for consistency.
 
 Two other invariants that must not silently relax:
 - **Admin manual entries auto-approve; everything else is pending.** Admin's own AI/photo output is still pending (LLM output is the failure mode). Family entries are always pending regardless of path (manual / AI / photo) — the gate is *who*, not *how*. Removing this lets family bypass admin review with a deliberate manual entry.
