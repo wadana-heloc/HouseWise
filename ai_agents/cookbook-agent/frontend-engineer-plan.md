@@ -65,6 +65,11 @@ Same two fields added below the password field. Admin sets them when creating a 
 
 ## Phase 2 — Cookbook Foundation (no AI)
 
+### AI agent status (for your awareness)
+- ✅ `generate_recipe` agent — delivered. The backend `/cookbook/recipes/generate` endpoint calls it and returns a full `Recipe` or raises a 502 error (agent failure). Show the same error toast you show for any API error.
+- ✅ `personalize_recipe_description` agent — delivered. The backend `/cookbook/recipes/{id}/description` endpoint may return `{ description: "", generated_at: string }` if the agent failed. Render the canonical recipe `description` field as fallback when the personalized description is empty.
+- ✅ `extract_recipe_from_image` agent — delivered. The backend `/cookbook/recipes/extract-photo` endpoint is ready to integrate. The photo tab in `cookbook-add` should be fully enabled. Important: strip the `data:image/jpeg;base64,` prefix before sending — pass only the raw base64 string in `image_base64`. On a 502 response, show an error toast ("Couldn't read this image — try a clearer photo").
+
 ### `services/cookbook.ts`
 
 ```typescript

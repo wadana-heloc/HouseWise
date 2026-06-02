@@ -236,21 +236,24 @@ Use `_caller_household_id(user, sb)` helper — copy directly from `low_stock/ro
 
 ## Phase 3 — Cookbook AI Endpoints
 
-**Dependency on AI engineer:** Receive and integrate:
-- `generate_recipe(prompt, household_context) -> dict`
-- `personalize_recipe_description(recipe, member_profile, recent_history) -> str`
-- `extract_recipe_from_image(image_base64, media_type) -> dict`
+**AI agent status:**
+- ✅ `generate_recipe` — delivered (`ai_agents/cookbook-agent/cookbook_agent.py`)
+- ✅ `personalize_recipe_description` — delivered (`ai_agents/cookbook-agent/cookbook_agent.py`)
+- ✅ `extract_recipe_from_image` — delivered (`ai_agents/recipe-photo-agent/recipe_photo_agent.py`)
 
-**Import pattern (same as existing agents):**
+**Import pattern — two separate agents, two separate path inserts:**
 ```python
 import sys
 from pathlib import Path
 from starlette.concurrency import run_in_threadpool
 
-def _import_cookbook_agent():
-    sys.path.insert(0, str(Path(__file__).parents[3] / 'ai_agents' / 'cookbook-agent'))
-    from cookbook_agent import generate_recipe, personalize_recipe_description
-    return generate_recipe, personalize_recipe_description
+# cookbook agent (generate + personalize)
+sys.path.insert(0, str(Path(__file__).parents[3] / 'ai_agents' / 'cookbook-agent'))
+from cookbook_agent import generate_recipe, personalize_recipe_description
+
+# recipe photo agent (extract from image)
+sys.path.insert(0, str(Path(__file__).parents[3] / 'ai_agents' / 'recipe-photo-agent'))
+from recipe_photo_agent import extract_recipe_from_image
 ```
 
 **Add endpoints:**
@@ -262,23 +265,131 @@ GET  /cookbook/recipes/{id}/description → check cache; if stale regenerate via
 
 **Cache invalidation:** `recipe_personalized_descriptions.generated_at < recipe.updated_at` → stale, regenerate.
 
-**Household context for `generate_recipe`:**
+---
+
+### Confirmed contract: `generate_recipe`
+
 ```python
-members_res = sb.table('users')
-    .select('display_name,age_group,taste_preferences,health_preferences')
-    .eq('household_id', household_id).execute()
+result = await run_in_threadpool(generate_recipe, prompt, household_context)
 ```
 
-**Member profile for `personalize_recipe_description`:**
+`household_context` — construct from Supabase before calling:
 ```python
-user_res = sb.table('users')
-    .select('display_name,age_group,taste_preferences,health_preferences')
-    .eq('id', str(caller.user_id)).single().execute()
-history_res = sb.table('recipe_history')
-    .select('recipe_id, reaction, created_at, recipes(name)')
-    .eq('user_id', str(caller.user_id))
-    .order('created_at', desc=True).limit(5).execute()
+members_res = sb.table('users') \
+    .select('display_name,age_group,taste_preferences,health_preferences') \
+    .eq('household_id', household_id).execute()
+
+household_context = {
+    'tag_hints': request.tag_hints,          # list[str] from GenerateRecipeRequest
+    'household_members': members_res.data,   # list of user rows as dicts
+}
 ```
+
+`household_members` row shape (Supabase returns this directly):
+```python
+{
+    'display_name': 'Ahmed',
+    'age_group': 'kid',
+    'taste_preferences': 'hates broccoli',
+    'health_preferences': {          # jsonb column — comes back as dict
+        'high_protein': False,
+        'low_calories': False,
+        'low_carbs': False,
+        'low_sugar': True,
+        'whole_grain': False,
+    }
+}
+```
+
+Return shape — same as `RecipeOut` minus `id`, `household_id`, `source`, `status`, `submitted_by`, `created_at`, `updated_at`:
+```python
+{
+    'name': str | None,
+    'description': str | None,
+    'ingredients': [{'name': str, 'quantity': str, 'unit': str, 'category': str}],
+    'instructions': str | None,
+    'tags': list[str],
+    'prep_minutes': int | None,
+    'servings': int | None,
+    'reason': str | None,   # None on success — check this before saving
+}
+```
+
+**Error handling:** if `result['reason'] is not None`, the agent failed — raise `HTTPException(status_code=502, detail=result['reason'])`. Do not insert a broken recipe into the database.
+
+---
+
+### Confirmed contract: `personalize_recipe_description`
+
+```python
+description = await run_in_threadpool(
+    personalize_recipe_description, recipe, member_profile, recent_history
+)
+```
+
+`member_profile` — query the calling user:
+```python
+user_res = sb.table('users') \
+    .select('display_name,age_group,taste_preferences,health_preferences') \
+    .eq('id', str(caller.user_id)).single().execute()
+
+member_profile = user_res.data  # pass the dict directly
+```
+
+`recent_history` — query then transform (Supabase join result needs reshaping):
+```python
+history_res = sb.table('recipe_history') \
+    .select('reaction, created_at, recipes(name)') \
+    .eq('user_id', str(caller.user_id)) \
+    .order('created_at', desc=True).limit(5).execute()
+
+recent_history = [
+    {
+        'recipe_name': row['recipes']['name'],
+        'eaten_on': row['created_at'][:10],   # ISO date string YYYY-MM-DD
+        'reaction': row['reaction'],
+    }
+    for row in history_res.data
+]
+```
+
+Return: plain `str` — never raises. Returns `""` on agent failure. If the returned string is empty, still cache it (avoids hammering the agent on every request for a bad recipe).
+
+---
+
+### Confirmed contract: `extract_recipe_from_image`
+
+```python
+result = await run_in_threadpool(extract_recipe_from_image, request.image_base64, request.media_type)
+```
+
+Input — pass directly from `ExtractPhotoRequest` body:
+- `image_base64`: raw base64 string — **no data URI prefix**. The frontend must strip `data:image/jpeg;base64,` before sending if using a browser file reader.
+- `media_type`: one of `"image/jpeg"`, `"image/png"`, `"image/webp"`
+
+Return shape — identical to `generate_recipe`:
+```python
+{
+    'name': str | None,
+    'description': str | None,
+    'ingredients': [{'name': str, 'quantity': str, 'unit': str, 'category': str}],
+    'instructions': str | None,
+    'tags': list[str],
+    'prep_minutes': int | None,
+    'servings': int | None,
+    'reason': str | None,
+}
+```
+
+**Two result cases to handle:**
+
+| Condition | Meaning | Action |
+|---|---|---|
+| `reason is not None` and `name is None` | Agent failed (API error or bad image) | Raise `HTTPException(502)` |
+| `reason is not None` and `name is not None` | Partial extraction (some fields missing from the photo) | Save the recipe; store `reason` in a log or `description` field as a note |
+| `reason is None` | Full extraction success | Save normally |
+
+**Model note:** Uses `claude-haiku-4-5-20251001` (vision) — not Sonnet. Cost is ~$0.008 per image vs. ~$0.05 for Sonnet. The backend does not control the model; the agent file does.
 
 ---
 
