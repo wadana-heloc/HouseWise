@@ -18,6 +18,7 @@ class SubmissionUpsert(BaseModel):
     week_start: date
     busy_days: list[int] = Field(default_factory=list, max_length=7)
     meal_requests: list[MealRequest] = Field(default_factory=list, max_length=20)
+    week_notes: Optional[str] = Field(default=None, max_length=2000)
 
     @field_validator("busy_days")
     @classmethod
@@ -37,6 +38,7 @@ class SubmissionOut(BaseModel):
     week_start: date
     busy_days: list[int]
     meal_requests: list[MealRequest]
+    week_notes: Optional[str]
     submitted_at: datetime
 
 

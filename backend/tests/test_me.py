@@ -195,3 +195,85 @@ def test_health_preferences_are_per_user(client, created_users):
 
     fam_prefs = _me(client, fam_token)["user"]["health_preferences"]
     assert fam_prefs["high_protein"] is False, "Admin's pref leaked into family member's profile"
+
+
+# ---------- PATCH /me/dietary-preferences ----------
+
+def test_get_me_returns_default_dietary_preferences(client, created_users):
+    admin = _signup_admin(client, created_users)
+    prefs = _me(client, admin["access_token"])["user"]["dietary_preferences"]
+    assert prefs == {"dietary_types": [], "allergies": [], "dislikes": []}
+
+
+def test_patch_dietary_preferences_replaces_one_key(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = client.patch(
+        "/me/dietary-preferences",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"allergies": ["peanuts", "shellfish"]},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body == {
+        "dietary_types": [],
+        "allergies": ["peanuts", "shellfish"],
+        "dislikes": [],
+    }
+
+
+def test_patch_dietary_preferences_replaces_full_list_no_append(client, created_users):
+    admin = _signup_admin(client, created_users)
+    tok = admin["access_token"]
+    client.patch(
+        "/me/dietary-preferences",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"dietary_types": ["vegetarian"]},
+    )
+    r = client.patch(
+        "/me/dietary-preferences",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"dietary_types": ["vegan"]},
+    )
+    assert r.status_code == 200
+    assert r.json()["dietary_types"] == ["vegan"], "Second PATCH must replace, not append"
+
+
+def test_patch_dietary_preferences_other_keys_preserved(client, created_users):
+    admin = _signup_admin(client, created_users)
+    tok = admin["access_token"]
+    client.patch(
+        "/me/dietary-preferences",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"dietary_types": ["vegetarian"], "allergies": ["peanuts"]},
+    )
+    r = client.patch(
+        "/me/dietary-preferences",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"dislikes": ["broccoli"]},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["dietary_types"] == ["vegetarian"]
+    assert body["allergies"] == ["peanuts"]
+    assert body["dislikes"] == ["broccoli"]
+
+
+def test_patch_dietary_preferences_empty_body_422(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = client.patch(
+        "/me/dietary-preferences",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={},
+    )
+    assert r.status_code == 422
+
+
+def test_patch_dietary_preferences_persists_across_requests(client, created_users):
+    admin = _signup_admin(client, created_users)
+    client.patch(
+        "/me/dietary-preferences",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"allergies": ["peanuts"]},
+    )
+    prefs = _me(client, admin["access_token"])["user"]["dietary_preferences"]
+    assert prefs["allergies"] == ["peanuts"]

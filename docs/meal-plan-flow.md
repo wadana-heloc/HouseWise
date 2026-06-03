@@ -8,7 +8,7 @@ The AI agent function lives outside the backend tree under [ai_agents/meal-plan-
 
 ## Resources
 
-- **`public.meal_plan_submissions`** — one row per `(household_id, user_id, week_start)`. Stores `busy_days` (`int[]`, ISO weekday 1=Mon..7=Sun) and `meal_requests` (JSONB array of `{description, recipe_id}`).
+- **`public.meal_plan_submissions`** — one row per `(household_id, user_id, week_start)`. Stores `busy_days` (`int[]`, ISO weekday 1=Mon..7=Sun), `meal_requests` (JSONB array of `{description, recipe_id}`), and `week_notes` (free-text up to 2000 chars, nullable — per-submission note like "hosting Friday, need easy meals").
 - **`public.meal_plans`** — one row per `(household_id, week_start)`. `status` is `'draft' | 'finalized'` (only `'draft'` is written this PR; `'finalized'` is pre-added for the deferred finalize flow).
 - **`public.meal_plan_days`** — exactly 7 rows per plan, keyed by `(plan_id, day_of_week)`. `prep_label` is `'prep' | 'reheat' | 'fresh'`. `recipe_id` is nullable (agent can invent meals that aren't in the cookbook). `suggested_ingredients` (JSONB) is stored even though unused this PR — the finalize PR consumes it to build the shopping list for agent-invented meals.
 
@@ -61,10 +61,16 @@ context = {
                 "low_sugar": False,
                 "whole_grain": True,
             },
+            "dietary_preferences": {      # from public.users.dietary_preferences (JSONB)
+                "dietary_types": ["vegetarian"],
+                "allergies": ["peanuts"],
+                "dislikes": ["broccoli"],
+            },
             "busy_days": [3, 5],
             "meal_requests": [
                 {"description": "something quick", "recipe_id": None},
             ],
+            "week_notes": "hosting Friday, need easy meals",   # from submission row, may be null
         },
         ...
     ],
@@ -84,6 +90,8 @@ context = {
 ```
 
 `age_group` and `taste_preferences` are passed as **`None`** because those columns don't exist in our schema. The agent must handle missing values — if it crashes on `None`, that's an AI-team-side fix, not a backend workaround.
+
+`dietary_preferences` is always present with the full 3-key shape (empty lists for unset keys) because the DB column has a default. `week_notes` is `null` for members who didn't submit, or who submitted without a note. **The chip values in `dietary_types` are FE-controlled free-text strings** — not a backend-validated enum. Belal's call so the FE can grow the chip set without a deploy; cost is the agent has to be tolerant of typo'd or unknown values.
 
 `low_stock_items` is pulled from **`public.low_stock_flags`** — `public.items` has no `'low_stock'` status enum value, contrary to what the AI engineer's "backend plan" assumed.
 

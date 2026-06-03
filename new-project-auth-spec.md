@@ -240,9 +240,10 @@ All paths under `/auth`. Public = no token required. Auth = bearer required.
 | POST   | `/household/members/{id}/password`  | bearer:admin | Admin resets a member's password directly. Does NOT invalidate the member's existing sessions.         |
 | PATCH  | `/household/members/{id}`           | bearer:admin | Admin updates a member's `display_name` / `email`. Email change uses `email_confirm=true` — no email sent. 400 on self-target. 404 cross-household. 409 on email conflict. |
 | DELETE | `/household/members/{id}`           | bearer:admin | Remove a family member from the household.                                                             |
-| GET    | `/me`                               | bearer       | Current user (incl. `health_preferences`) + household snapshot.                                        |
+| GET    | `/me`                               | bearer       | Current user (incl. `health_preferences` + `dietary_preferences`) + household snapshot.                |
 | PATCH  | `/me/profile`                       | bearer       | Self-update of `display_name` and/or `email`. Email change uses `email_confirm=true` — no email sent. 409 on conflict. |
 | PATCH  | `/me/health-preferences`            | bearer       | Partial update of per-user health-preference toggles. Unknown keys → 422.                              |
+| PATCH  | `/me/dietary-preferences`           | bearer       | Partial update of per-user `dietary_types` / `allergies` / `dislikes`. FE sends full replacement list per key. |
 | POST   | `/low-stock`                        | bearer       | Flag an item as running low in the caller's household. 409 if the name is already flagged (any member). |
 | GET    | `/low-stock`                        | bearer       | List the caller's household low-stock flags, newest first. Includes flagger display name.              |
 | DELETE | `/low-stock/{flag_id}`              | bearer       | Clear a flag. Open to any household member. 404 cross-household.                                       |
@@ -259,7 +260,7 @@ All paths under `/auth`. Public = no token required. Auth = bearer required.
 | POST   | `/cookbook/recipes/{id}/approve`    | bearer:admin | Flip pending → approved. Idempotent (re-call on approved returns 200).                                 |
 | POST   | `/cookbook/recipes/generate`        | bearer       | Pass-through preview (no DB write). Returns `RecipePreview`. 502 on total agent failure.               |
 | POST   | `/cookbook/recipes/extract-photo`   | bearer       | Pass-through preview (no DB write). `RecipePreview.reason` populated on partial extraction.            |
-| POST   | `/meal-plan/submissions`            | bearer       | Upsert caller's week submission. Re-submitting same week replaces.                                     |
+| POST   | `/meal-plan/submissions`            | bearer       | Upsert caller's week submission (busy_days + meal_requests + optional `week_notes`). Re-submitting replaces; omitting `week_notes` clears it. |
 | GET    | `/meal-plan/submissions/me`         | bearer       | Caller's own submission for `?week_start=...`. 404 if not yet submitted.                               |
 | GET    | `/meal-plan/submissions/status`     | bearer       | Per-member `submitted: bool` list + counts. Booleans only; submission content not leaked.              |
 | GET    | `/meal-plan/{week_start}`           | bearer       | Plan + 7 days. 404 if no plan yet for that week.                                                       |

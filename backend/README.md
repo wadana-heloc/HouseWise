@@ -53,9 +53,10 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | POST   | `/household/members/{id}/password` | bearer:admin | Admin resets a member's password directly. Does not invalidate the member's existing sessions. |
 | PATCH  | `/household/members/{id}` | bearer:admin | Admin updates a member's `display_name` and/or `email`. Email change is instant (no confirmation email). 400 on self-target (use `/me/profile`). |
 | DELETE | `/household/members/{id}` | bearer:admin | Remove a family member. |
-| GET    | `/me` | bearer | Current user (incl. `health_preferences`) + household snapshot. |
+| GET    | `/me` | bearer | Current user (incl. `health_preferences` and `dietary_preferences`) + household snapshot. |
 | PATCH  | `/me/profile` | bearer | Self-update `display_name` and/or `email`. Email change is instant (no confirmation email). |
-| PATCH  | `/me/health-preferences` | bearer | Partial update of the per-user dietary toggles (high_protein, low_calories, low_carbs, low_sugar, whole_grain). Unknown keys → 422. |
+| PATCH  | `/me/health-preferences` | bearer | Partial update of the per-user diet toggles (high_protein, low_calories, low_carbs, low_sugar, whole_grain). Unknown keys → 422. |
+| PATCH  | `/me/dietary-preferences` | bearer | Partial update of the caller's `dietary_types` / `allergies` / `dislikes` (free-text lists). FE sends the full replacement list for any key it wants to change. |
 | POST   | `/items` | bearer | Add an item to the caller's household. Server sets `status='pending'`, `added_by=caller`. |
 | GET    | `/items` | bearer | List items in the caller's household. Filters: `status`, `urgent`, `category`, `added_by`. |
 | GET    | `/items/{id}` | bearer | Fetch one item (404 cross-household). |
@@ -78,7 +79,7 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | GET    | `/stores` | bearer | List the caller's household stores, alphabetical. Any member can read. |
 | PATCH  | `/stores/{store_id}` | bearer:admin | Update name and/or URL. Same uniqueness + URL rules as POST. |
 | DELETE | `/stores/{store_id}` | bearer:admin | Remove a store. |
-| POST   | `/meal-plan/submissions` | bearer | Upsert caller's week submission (busy days + meal requests). Re-submitting same week replaces. |
+| POST   | `/meal-plan/submissions` | bearer | Upsert caller's week submission (busy days + meal requests + optional `week_notes`). Re-submitting same week replaces; omitting `week_notes` clears it. |
 | GET    | `/meal-plan/submissions/me` | bearer | Caller's own submission for `?week_start=...`. 404 if not yet submitted. |
 | GET    | `/meal-plan/submissions/status` | bearer | Per-member `submitted: bool` for `?week_start=...`. Booleans only; content not leaked. |
 | GET    | `/meal-plan/{week_start}` | bearer | Plan + 7 days sorted by day_of_week. 404 if no plan yet. |
@@ -115,6 +116,7 @@ Run migrations in order in the Supabase SQL Editor:
 7. [supabase/migrations/0007_init_stores.sql](../supabase/migrations/0007_init_stores.sql) — `public.stores` + unique `(household_id, lower(name))` + GRANTs + same-household SELECT RLS + `updated_at` trigger.
 8. [supabase/migrations/0008_init_cookbook.sql](../supabase/migrations/0008_init_cookbook.sql) — `public.recipes` + `recipe_source` / `recipe_status` enums + GRANTs + RLS (approved-or-own-pending) + `updated_at` trigger.
 9. [supabase/migrations/0009_init_meal_plan.sql](../supabase/migrations/0009_init_meal_plan.sql) — `public.meal_plan_submissions`, `public.meal_plans`, `public.meal_plan_days` + `meal_plan_status` / `prep_label` enums + GRANTs + same-household SELECT RLS + `updated_at` trigger.
+10. [supabase/migrations/0010_dietary_prefs_and_week_notes.sql](../supabase/migrations/0010_dietary_prefs_and_week_notes.sql) — adds `public.users.dietary_preferences jsonb` (default `{dietary_types:[], allergies:[], dislikes:[]}`) and `public.meal_plan_submissions.week_notes text` (nullable, ≤ 2000 chars).
 
 0001 creates:
 - `public.households`, `public.users` with FKs into `auth.users`

@@ -91,7 +91,7 @@ def _build_agent_context(sb, household_id: str, week_start: date) -> dict[str, A
 
     members = (
         sb.table("users")
-        .select("id, display_name, health_preferences")
+        .select("id, display_name, health_preferences, dietary_preferences")
         .eq("household_id", household_id)
         .execute()
         .data
@@ -99,7 +99,7 @@ def _build_agent_context(sb, household_id: str, week_start: date) -> dict[str, A
 
     submissions = (
         sb.table("meal_plan_submissions")
-        .select("user_id, busy_days, meal_requests")
+        .select("user_id, busy_days, meal_requests, week_notes")
         .eq("household_id", household_id)
         .eq("week_start", week_iso)
         .execute()
@@ -116,8 +116,12 @@ def _build_agent_context(sb, household_id: str, week_start: date) -> dict[str, A
             "age_group": None,
             "taste_preferences": None,
             "health_preferences": m.get("health_preferences") or {},
+            "dietary_preferences": m.get("dietary_preferences") or {
+                "dietary_types": [], "allergies": [], "dislikes": [],
+            },
             "busy_days": subs_by_user.get(m["id"], {}).get("busy_days", []),
             "meal_requests": subs_by_user.get(m["id"], {}).get("meal_requests", []),
+            "week_notes": subs_by_user.get(m["id"], {}).get("week_notes"),
         }
         for m in members
     ]
@@ -209,6 +213,7 @@ def upsert_submission(body: SubmissionUpsert, user: CurrentUser = Depends(curren
         "week_start": body.week_start.isoformat(),
         "busy_days": body.busy_days,
         "meal_requests": [m.model_dump() for m in body.meal_requests],
+        "week_notes": body.week_notes,
     }
     sb.table("meal_plan_submissions").upsert(
         payload, on_conflict="household_id,user_id,week_start"

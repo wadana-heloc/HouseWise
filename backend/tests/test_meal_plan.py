@@ -632,3 +632,103 @@ def test_finalize_cross_household_404(client, created_users, patch_meal_plan_age
         headers={"Authorization": f"Bearer {a2['access_token']}"},
     )
     assert r.status_code == 404
+
+
+# ---------- week_notes + dietary_preferences in agent context ----------
+
+
+def test_submission_round_trips_week_notes(client, created_users):
+    admin = _signup_admin(client, created_users)
+    tok = admin["access_token"]
+    r = client.post(
+        "/meal-plan/submissions",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={
+            "week_start": WEEK,
+            "busy_days": [3],
+            "meal_requests": [],
+            "week_notes": "hosting Friday, need easy meals",
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["week_notes"] == "hosting Friday, need easy meals"
+
+    me_sub = client.get(
+        f"/meal-plan/submissions/me?week_start={WEEK}",
+        headers={"Authorization": f"Bearer {tok}"},
+    )
+    assert me_sub.status_code == 200
+    assert me_sub.json()["week_notes"] == "hosting Friday, need easy meals"
+
+
+def test_resubmit_overwrites_week_notes(client, created_users):
+    admin = _signup_admin(client, created_users)
+    tok = admin["access_token"]
+    client.post(
+        "/meal-plan/submissions",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"week_start": WEEK, "busy_days": [], "meal_requests": [], "week_notes": "first"},
+    )
+    r = client.post(
+        "/meal-plan/submissions",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"week_start": WEEK, "busy_days": [], "meal_requests": []},
+    )
+    # Body omitted week_notes — Pydantic defaults to None, upsert clears it.
+    assert r.status_code == 201
+    assert r.json()["week_notes"] is None
+
+
+def test_generate_context_includes_dietary_prefs_and_week_notes(
+    client, created_users, patch_meal_plan_agent
+):
+    admin = _signup_admin(client, created_users)
+    tok = admin["access_token"]
+    client.patch(
+        "/me/dietary-preferences",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"dietary_types": ["vegetarian"], "allergies": ["peanuts"]},
+    )
+    client.post(
+        "/meal-plan/submissions",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={
+            "week_start": WEEK,
+            "busy_days": [2],
+            "meal_requests": [],
+            "week_notes": "hosting Friday",
+        },
+    )
+
+    client.post(
+        "/meal-plan/generate",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"week_start": WEEK},
+    )
+    ctx = patch_meal_plan_agent.calls[-1]
+    me_in_ctx = next(
+        m for m in ctx["household_members"] if m["display_name"] == "Admin"
+    )
+    assert me_in_ctx["dietary_preferences"]["dietary_types"] == ["vegetarian"]
+    assert me_in_ctx["dietary_preferences"]["allergies"] == ["peanuts"]
+    assert me_in_ctx["dietary_preferences"]["dislikes"] == []
+    assert me_in_ctx["week_notes"] == "hosting Friday"
+
+
+def test_generate_context_defaults_for_member_without_submission_or_prefs(
+    client, created_users, patch_meal_plan_agent
+):
+    admin = _signup_admin(client, created_users)
+    _create_member(client, admin["access_token"], created_users, display_name="NoSub")
+    # Admin generates without anyone submitting or setting prefs.
+    client.post(
+        "/meal-plan/generate",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"week_start": WEEK},
+    )
+    ctx = patch_meal_plan_agent.calls[-1]
+    nosub = next(m for m in ctx["household_members"] if m["display_name"] == "NoSub")
+    assert nosub["dietary_preferences"] == {
+        "dietary_types": [], "allergies": [], "dislikes": [],
+    }
+    assert nosub["week_notes"] is None

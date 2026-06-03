@@ -91,6 +91,7 @@ supabase/
     0007_init_stores.sql                     # stores table + unique (household, lower(name)) + RLS
     0008_init_cookbook.sql                   # recipes table + recipe_source/recipe_status enums + RLS
     0009_init_meal_plan.sql                  # meal_plan_submissions + meal_plans + meal_plan_days + meal_plan_status/prep_label enums + RLS
+    0010_dietary_prefs_and_week_notes.sql    # users.dietary_preferences jsonb + meal_plan_submissions.week_notes text
 
 docs/
   auth-flow.md         # runtime sequences, SDK refresh, failure modes
