@@ -452,19 +452,7 @@ def test_patch_day_cross_household_404(client, created_users, patch_meal_plan_ag
 # ---------- Finalize ----------
 
 
-def _items_in_household(sb, household_id):
-    return (
-        sb.table("items")
-        .select("*")
-        .eq("household_id", household_id)
-        .execute()
-        .data
-    ) or []
-
-
-def test_admin_finalize_flips_status_and_inserts_items(
-    client, sb, created_users, patch_meal_plan_agent
-):
+def test_admin_finalize_flips_status(client, sb, created_users, patch_meal_plan_agent):
     admin = _signup_admin(client, created_users)
     gen = client.post(
         "/meal-plan/generate",
@@ -479,49 +467,17 @@ def test_admin_finalize_flips_status_and_inserts_items(
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "finalized"
 
-    items = _items_in_household(sb, admin["household_id"])
-    # Default _good_days yields "Eggs" on days 2-7 → 1 row after dedup.
-    eggs = [i for i in items if i["name"] == "Eggs"]
-    assert len(eggs) == 1, items
-    e = eggs[0]
-    assert e["status"] == "pending"
-    assert e["added_by"] == admin["user_id"]
-    assert e["category"] == "dairy"
-    assert WEEK in (e["notes"] or "")
-
-
-def test_finalize_dedups_within_batch(client, sb, created_users, patch_meal_plan_agent):
-    admin = _signup_admin(client, created_users)
-    # Same name, different casings on different days → one row.
-    days = _good_days()
-    days[1]["suggested_ingredients"] = [
-        {"name": "EGGS", "quantity": "2", "unit": "units", "category": "dairy"}
-    ]
-    days[2]["suggested_ingredients"] = [
-        {"name": "eggs", "quantity": "3", "unit": "units", "category": "dairy"}
-    ]
-    days[3]["suggested_ingredients"] = [
-        {"name": "Eggs", "quantity": "4", "unit": "units", "category": "dairy"}
-    ]
-    patch_meal_plan_agent.set(days=days)
-    gen = client.post(
-        "/meal-plan/generate",
-        headers={"Authorization": f"Bearer {admin['access_token']}"},
-        json={"week_start": WEEK},
-    ).json()
-
-    client.post(
-        f"/meal-plan/{gen['id']}/finalize",
-        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    # Finalize must NOT touch the items table — FE owns shopping-list population.
+    items = (
+        sb.table("items")
+        .select("id", count="exact")
+        .eq("household_id", admin["household_id"])
+        .execute()
     )
-    items = _items_in_household(sb, admin["household_id"])
-    egg_rows = [i for i in items if i["name"].lower() == "eggs"]
-    assert len(egg_rows) == 1
+    assert (items.count or 0) == 0
 
 
-def test_finalize_idempotent_no_second_items_insert(
-    client, sb, created_users, patch_meal_plan_agent
-):
+def test_finalize_idempotent(client, created_users, patch_meal_plan_agent):
     admin = _signup_admin(client, created_users)
     gen = client.post(
         "/meal-plan/generate",
@@ -532,7 +488,6 @@ def test_finalize_idempotent_no_second_items_insert(
         f"/meal-plan/{gen['id']}/finalize",
         headers={"Authorization": f"Bearer {admin['access_token']}"},
     )
-    count_before = len(_items_in_household(sb, admin["household_id"]))
 
     r = client.post(
         f"/meal-plan/{gen['id']}/finalize",
@@ -540,67 +495,6 @@ def test_finalize_idempotent_no_second_items_insert(
     )
     assert r.status_code == 200
     assert r.json()["status"] == "finalized"
-    assert len(_items_in_household(sb, admin["household_id"])) == count_before
-
-
-def test_finalize_uses_recipe_ingredients_when_recipe_id_set(
-    client, sb, created_users, patch_meal_plan_agent
-):
-    admin = _signup_admin(client, created_users)
-    # Admin manual save → status='approved' so it's an eligible recipe.
-    recipe = client.post(
-        "/cookbook/recipes",
-        headers={"Authorization": f"Bearer {admin['access_token']}"},
-        json={
-            "name": "Tikka",
-            "description": None,
-            "ingredients": [
-                {"name": "Chicken", "quantity": "500", "unit": "g", "category": "meat"},
-            ],
-            "instructions": None,
-            "tags": [],
-            "prep_minutes": None,
-            "servings": None,
-        },
-    ).json()
-
-    days = _good_days(recipe_id=recipe["id"])
-    # Wipe all suggested_ingredients so the only source is the recipe join.
-    for d in days:
-        d["suggested_ingredients"] = []
-    patch_meal_plan_agent.set(days=days)
-    gen = client.post(
-        "/meal-plan/generate",
-        headers={"Authorization": f"Bearer {admin['access_token']}"},
-        json={"week_start": WEEK},
-    ).json()
-
-    client.post(
-        f"/meal-plan/{gen['id']}/finalize",
-        headers={"Authorization": f"Bearer {admin['access_token']}"},
-    )
-    items = _items_in_household(sb, admin["household_id"])
-    names = {i["name"] for i in items}
-    assert "Chicken" in names
-
-
-def test_finalize_falls_back_to_suggested_for_null_recipe_days(
-    client, sb, created_users, patch_meal_plan_agent
-):
-    admin = _signup_admin(client, created_users)
-    days = _good_days()  # all days null recipe_id; days 2-7 have Eggs suggested
-    patch_meal_plan_agent.set(days=days)
-    gen = client.post(
-        "/meal-plan/generate",
-        headers={"Authorization": f"Bearer {admin['access_token']}"},
-        json={"week_start": WEEK},
-    ).json()
-    client.post(
-        f"/meal-plan/{gen['id']}/finalize",
-        headers={"Authorization": f"Bearer {admin['access_token']}"},
-    )
-    items = _items_in_household(sb, admin["household_id"])
-    assert any(i["name"] == "Eggs" for i in items)
 
 
 def test_family_cannot_finalize(client, created_users, patch_meal_plan_agent):
@@ -732,3 +626,207 @@ def test_generate_context_defaults_for_member_without_submission_or_prefs(
         "dietary_types": [], "allergies": [], "dislikes": [],
     }
     assert nosub["week_notes"] is None
+
+
+# ---------- Reactions ----------
+
+
+def _generate_and_finalize(client, admin_token, agent, week_start=WEEK):
+    gen = client.post(
+        "/meal-plan/generate",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"week_start": week_start},
+    ).json()
+    client.post(
+        f"/meal-plan/{gen['id']}/finalize",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    return gen
+
+
+def test_react_on_finalized_day_persists(client, sb, created_users, patch_meal_plan_agent):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    tok = _member_token(client, member)
+    gen = _generate_and_finalize(client, admin["access_token"], patch_meal_plan_agent)
+
+    r = client.post(
+        f"/meal-plan/{gen['id']}/react",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"day_id": gen["days"][2]["id"], "reaction": "liked"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["user_id"] == member["user_id"]
+    assert body["reaction"] == "liked"
+    assert body["day_id"] == gen["days"][2]["id"]
+
+
+def test_react_replaces_on_repost_same_user(client, created_users, patch_meal_plan_agent):
+    admin = _signup_admin(client, created_users)
+    tok = admin["access_token"]
+    gen = _generate_and_finalize(client, tok, patch_meal_plan_agent)
+    day_id = gen["days"][0]["id"]
+
+    r1 = client.post(
+        f"/meal-plan/{gen['id']}/react",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"day_id": day_id, "reaction": "liked"},
+    )
+    r2 = client.post(
+        f"/meal-plan/{gen['id']}/react",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"day_id": day_id, "reaction": "disliked"},
+    )
+    assert r2.status_code == 200
+    assert r2.json()["reaction"] == "disliked"
+    assert r2.json()["id"] == r1.json()["id"], "Upsert must return the same row, not a new one"
+
+
+def test_react_invalid_value_422(client, created_users, patch_meal_plan_agent):
+    admin = _signup_admin(client, created_users)
+    gen = _generate_and_finalize(client, admin["access_token"], patch_meal_plan_agent)
+    r = client.post(
+        f"/meal-plan/{gen['id']}/react",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"day_id": gen["days"][0]["id"], "reaction": "neutral"},
+    )
+    assert r.status_code == 422
+
+
+def test_react_on_draft_plan_409(client, sb, created_users, patch_meal_plan_agent):
+    admin = _signup_admin(client, created_users)
+    gen = client.post(
+        "/meal-plan/generate",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"week_start": WEEK},
+    ).json()  # NOT finalized
+
+    r = client.post(
+        f"/meal-plan/{gen['id']}/react",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"day_id": gen["days"][0]["id"], "reaction": "liked"},
+    )
+    assert r.status_code == 409
+    rows = (
+        sb.table("meal_plan_day_reactions")
+        .select("id", count="exact")
+        .eq("user_id", admin["user_id"])
+        .execute()
+    )
+    assert (rows.count or 0) == 0
+
+
+def test_react_wrong_day_id_404(client, created_users, patch_meal_plan_agent):
+    admin = _signup_admin(client, created_users)
+    gen = _generate_and_finalize(client, admin["access_token"], patch_meal_plan_agent)
+    r = client.post(
+        f"/meal-plan/{gen['id']}/react",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={
+            "day_id": "00000000-0000-0000-0000-000000000000",
+            "reaction": "liked",
+        },
+    )
+    assert r.status_code == 404
+
+
+def test_react_cross_household_404(client, created_users, patch_meal_plan_agent):
+    a1 = _signup_admin(client, created_users, household_name="H1")
+    a2 = _signup_admin(client, created_users, household_name="H2")
+    gen = _generate_and_finalize(client, a1["access_token"], patch_meal_plan_agent)
+    r = client.post(
+        f"/meal-plan/{gen['id']}/react",
+        headers={"Authorization": f"Bearer {a2['access_token']}"},
+        json={"day_id": gen["days"][0]["id"], "reaction": "liked"},
+    )
+    assert r.status_code == 404
+
+
+def test_get_reactions_returns_all_members(client, created_users, patch_meal_plan_agent):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_tok = _member_token(client, member)
+    gen = _generate_and_finalize(client, admin["access_token"], patch_meal_plan_agent)
+
+    client.post(
+        f"/meal-plan/{gen['id']}/react",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"day_id": gen["days"][0]["id"], "reaction": "liked"},
+    )
+    client.post(
+        f"/meal-plan/{gen['id']}/react",
+        headers={"Authorization": f"Bearer {fam_tok}"},
+        json={"day_id": gen["days"][1]["id"], "reaction": "disliked"},
+    )
+
+    r = client.get(
+        f"/meal-plan/{gen['id']}/reactions",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    by_user = {row["user_id"]: row for row in body["reactions"]}
+    assert by_user[admin["user_id"]]["reaction"] == "liked"
+    assert by_user[member["user_id"]]["reaction"] == "disliked"
+
+
+def test_reactions_cascade_on_regenerate(client, sb, created_users, patch_meal_plan_agent):
+    admin = _signup_admin(client, created_users)
+    gen = _generate_and_finalize(client, admin["access_token"], patch_meal_plan_agent)
+    client.post(
+        f"/meal-plan/{gen['id']}/react",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"day_id": gen["days"][0]["id"], "reaction": "liked"},
+    )
+
+    # Re-generate same week — should cascade-delete the reactions for that plan.
+    client.post(
+        "/meal-plan/generate",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"week_start": WEEK},
+    )
+
+    # The original day_id is gone (delete-then-insert), so the reaction row
+    # for it cascaded out too.
+    rows = (
+        sb.table("meal_plan_day_reactions")
+        .select("id", count="exact")
+        .eq("day_id", gen["days"][0]["id"])
+        .execute()
+    )
+    assert (rows.count or 0) == 0
+
+
+def test_generate_context_includes_recent_reactions(
+    client, sb, created_users, patch_meal_plan_agent
+):
+    admin = _signup_admin(client, created_users)
+    tok = admin["access_token"]
+    # Week N-1: generate + finalize, react.
+    prev_days = _good_days()
+    prev_days[2]["meal_name"] = "Memorable dish"
+    patch_meal_plan_agent.set(days=prev_days)
+    gen_prev = _generate_and_finalize(client, tok, patch_meal_plan_agent, week_start=PREV_WEEK)
+    client.post(
+        f"/meal-plan/{gen_prev['id']}/react",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"day_id": gen_prev["days"][2]["id"], "reaction": "liked"},
+    )
+
+    # Week N: generate again; capture the context.
+    patch_meal_plan_agent.set(days=_good_days())
+    client.post(
+        "/meal-plan/generate",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"week_start": WEEK},
+    )
+    ctx = patch_meal_plan_agent.calls[-1]
+    me_in_ctx = next(m for m in ctx["household_members"] if m["display_name"] == "Admin")
+    assert len(me_in_ctx["recent_reactions"]) >= 1
+    found = next(
+        r for r in me_in_ctx["recent_reactions"]
+        if r["meal_name"] == "Memorable dish"
+    )
+    assert found["reaction"] == "liked"
+    assert found["week_start"] == PREV_WEEK

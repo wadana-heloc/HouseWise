@@ -72,6 +72,7 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | POST   | `/cookbook/recipes/{id}/approve` | bearer:admin | Flip a pending recipe to approved. Idempotent. |
 | POST   | `/cookbook/recipes/generate` | bearer | **Pass-through preview** — calls the cookbook agent and returns a `RecipePreview` (no DB write). FE saves via `POST /cookbook/recipes` with `source='ai_generated'`. 502 on agent total failure. |
 | POST   | `/cookbook/recipes/extract-photo` | bearer | **Pass-through preview** — calls the photo agent and returns a `RecipePreview` (no DB write); partial extractions carry a `reason` field. FE saves via `POST /cookbook/recipes` with `source='photo'`. 502 only on no-name failure. |
+| GET    | `/cookbook/recipes/{id}/description` | bearer | Per-user, AI-personalized recipe blurb. Cached in `recipe_personalized_descriptions`; regenerated when the recipe is edited. May return `description: ""` on agent failure (still cached). |
 | POST   | `/low-stock` | bearer | Flag an item as running low. 409 if the name is already flagged in this household (any member). |
 | GET    | `/low-stock` | bearer | List the caller's household flags, newest first. Each row includes `added_by_display_name`. |
 | DELETE | `/low-stock/{flag_id}` | bearer | Clear a flag. Any household member may delete any flag. |
@@ -85,7 +86,9 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | GET    | `/meal-plan/{week_start}` | bearer | Plan + 7 days sorted by day_of_week. 404 if no plan yet. |
 | POST   | `/meal-plan/generate` | bearer:admin | Generate / re-generate the week's plan via the meal-plan agent. 502 on total agent failure. |
 | PATCH  | `/meal-plan/{plan_id}/days/{day_id}` | bearer:admin | Edit one day's `meal_name`, `prep_label`, `notes`, or `recipe_id`. |
-| POST   | `/meal-plan/{plan_id}/finalize` | bearer:admin | Flip `status` to `'finalized'` and auto-add the week's deduplicated ingredients to `/items` (as `status='pending'`, `unit='units'`, qty parsed best-effort with original qty+unit in `notes`). Idempotent. |
+| POST   | `/meal-plan/{plan_id}/finalize` | bearer:admin | Flip `status` to `'finalized'` and return the updated plan. **Does not touch `/items`** — FE reads the plan's days and pushes whichever ingredients it wants into the shopping list itself. Idempotent. |
+| POST   | `/meal-plan/{plan_id}/react` | bearer | Upsert caller's reaction on one day. `{day_id, reaction: 'liked' \| 'disliked'}`. 409 if plan is still `'draft'`. |
+| GET    | `/meal-plan/{plan_id}/reactions` | bearer | Every household member's reactions across the plan's 7 days. |
 | GET    | `/health` | public | Liveness. |
 
 Items flow + state machine + permission matrix: [docs/items-flow.md](../docs/items-flow.md).
@@ -117,6 +120,8 @@ Run migrations in order in the Supabase SQL Editor:
 8. [supabase/migrations/0008_init_cookbook.sql](../supabase/migrations/0008_init_cookbook.sql) — `public.recipes` + `recipe_source` / `recipe_status` enums + GRANTs + RLS (approved-or-own-pending) + `updated_at` trigger.
 9. [supabase/migrations/0009_init_meal_plan.sql](../supabase/migrations/0009_init_meal_plan.sql) — `public.meal_plan_submissions`, `public.meal_plans`, `public.meal_plan_days` + `meal_plan_status` / `prep_label` enums + GRANTs + same-household SELECT RLS + `updated_at` trigger.
 10. [supabase/migrations/0010_dietary_prefs_and_week_notes.sql](../supabase/migrations/0010_dietary_prefs_and_week_notes.sql) — adds `public.users.dietary_preferences jsonb` (default `{dietary_types:[], allergies:[], dislikes:[]}`) and `public.meal_plan_submissions.week_notes text` (nullable, ≤ 2000 chars).
+11. [supabase/migrations/0011_meal_plan_day_reactions.sql](../supabase/migrations/0011_meal_plan_day_reactions.sql) — `public.meal_plan_day_reactions` + `meal_plan_reaction` enum (`liked`/`disliked`) + same-household SELECT RLS + `updated_at` trigger. Keyed on `(day_id, user_id)`; cascades with `meal_plan_days`.
+12. [supabase/migrations/0012_recipe_personalized_descriptions.sql](../supabase/migrations/0012_recipe_personalized_descriptions.sql) — `public.recipe_personalized_descriptions` cache table + per-user SELECT RLS (`user_id = auth.uid()`). Staleness checked in the app layer against `recipes.updated_at`.
 
 0001 creates:
 - `public.households`, `public.users` with FKs into `auth.users`

@@ -11,6 +11,7 @@ The AI agent function lives outside the backend tree under [ai_agents/meal-plan-
 - **`public.meal_plan_submissions`** — one row per `(household_id, user_id, week_start)`. Stores `busy_days` (`int[]`, ISO weekday 1=Mon..7=Sun), `meal_requests` (JSONB array of `{description, recipe_id}`), and `week_notes` (free-text up to 2000 chars, nullable — per-submission note like "hosting Friday, need easy meals").
 - **`public.meal_plans`** — one row per `(household_id, week_start)`. `status` is `'draft' | 'finalized'` (only `'draft'` is written this PR; `'finalized'` is pre-added for the deferred finalize flow).
 - **`public.meal_plan_days`** — exactly 7 rows per plan, keyed by `(plan_id, day_of_week)`. `prep_label` is `'prep' | 'reheat' | 'fresh'`. `recipe_id` is nullable (agent can invent meals that aren't in the cookbook). `suggested_ingredients` (JSONB) is stored even though unused this PR — the finalize PR consumes it to build the shopping list for agent-invented meals.
+- **`public.meal_plan_day_reactions`** — one row per `(day_id, user_id)`. `reaction` is `'liked'` / `'disliked'` (two-value `meal_plan_reaction` enum). `ON DELETE CASCADE` on `day_id` — re-generating a plan wipes its reactions automatically; reactions on prior weeks' days are untouched.
 
 ---
 
@@ -25,6 +26,8 @@ The AI agent function lives outside the backend tree under [ai_agents/meal-plan-
 | POST | `/meal-plan/generate` | admin | `GenerateMealPlanRequest` | Calls `generate_weekly_plan` agent. Upserts plan; replaces 7 day rows. 502 on total agent failure. |
 | PATCH | `/meal-plan/{plan_id}/days/{day_id}` | admin | `DayUpdate` (≥1 field) | Edit one day's `meal_name`, `prep_label`, `notes`, or `recipe_id`. Returns the full updated plan. |
 | POST | `/meal-plan/{plan_id}/finalize` | admin | — | Flip `status` to `'finalized'` and auto-populate the shopping list with the week's ingredients (deduped within-batch). Idempotent. |
+| POST | `/meal-plan/{plan_id}/react` | any member | `ReactionUpsert` | Upsert caller's reaction on one day. `'liked'` / `'disliked'`. Only on finalized plans (409 on draft). |
+| GET | `/meal-plan/{plan_id}/reactions` | any member | — | Every household member's reactions across the plan's 7 days. |
 
 ---
 
@@ -71,6 +74,15 @@ context = {
                 {"description": "something quick", "recipe_id": None},
             ],
             "week_notes": "hosting Friday, need easy meals",   # from submission row, may be null
+            "recent_reactions": [                              # last 28 days of this member's reactions
+                {
+                    "meal_name": "Chicken Tikka",
+                    "recipe_id": "uuid-or-null",               # null when the prior week's meal was agent-invented
+                    "reaction": "liked",                       # "liked" | "disliked"
+                    "week_start": "2026-05-25",
+                },
+                ...
+            ],
         },
         ...
     ],
@@ -123,30 +135,43 @@ context = {
 
 ---
 
-## Finalize — what gets inserted into `items`
+## Finalize — status flip only
 
-`POST /meal-plan/{plan_id}/finalize` collects ingredients from each of the 7 days:
+`POST /meal-plan/{plan_id}/finalize` flips the plan's `status` from `'draft'` to `'finalized'` and returns the updated plan. **That's it.** Idempotent — calling on an already-finalized plan returns 200 with the plan unchanged.
 
-- **Days with `recipe_id` set** → pull from `recipes.ingredients` (joined in one query).
-- **Days with `recipe_id IS NULL`** → use `meal_plan_days.suggested_ingredients` (already JSONB on the row).
+Finalize does NOT populate the shopping list. The FE reads the plan's days (each with `recipe_id` and / or `suggested_ingredients`) and decides which ingredients to push into `/items` itself, calling `POST /items` per row. This keeps the backend API surface small and lets the FE preview / filter (e.g. "skip eggs, we already have them") before committing rows.
 
-Then dedup within-batch by `lower(name).strip()`. First occurrence wins so the original casing is preserved. One `public.items` INSERT per unique name.
+---
 
-**Inserted row shape:**
+## Reactions
 
-| column | value |
-| --- | --- |
-| `name` | `ingredient.name` (original casing) |
-| `category` | `ingredient.category` (already a valid `item_category` enum) |
-| `quantity` | parsed `Decimal` from `ingredient.quantity`; falls back to `1` if the recipe used a non-numeric string like "a pinch" |
-| `unit` | hardcoded `'units'` — recipe units (cups, tbsp, ...) don't map to the strict `ItemUnit` enum |
-| `status` | `'pending'` (admin promotes / rejects from the items queue) |
-| `notes` | `"From meal plan: 2026-06-01 (200 g)"` — keeps the original qty+unit since we drop them from the structured columns |
-| `added_by` | admin who finalized |
+Two endpoints back the thumbs-up / thumbs-down strip on the home screen and feed the agent's next-week generation:
 
-**Existing items in the household are NOT considered.** If "Olive oil" is already pending from a low-stock flag and the plan needs it too, finalize adds a second row. Admin merges manually from the items queue. This avoids a unique constraint / merge layer we don't need yet.
+- `POST /meal-plan/{plan_id}/react` — upsert one reaction. Body `{day_id, reaction}` with reaction in `'liked' | 'disliked'`. **409 if the plan is still `'draft'`** — reactions only on finalized plans. Re-posting flips the value (no need to DELETE first).
+- `GET /meal-plan/{plan_id}/reactions` — flat list of every household member's reactions across all 7 days. FE filters locally by `day_id` to render the chips under each day card.
 
-Ingredients with an empty/missing `name` or a `category` that isn't in the `item_category` enum are **skipped with a warning log** (`housewise.meal_plan` logger). The rest of the finalize call still succeeds.
+Two-value enum, **no neutral middle** (FE decision). The DB enum is named `meal_plan_reaction` (not `recipe_reaction` from the AI engineer's plan) because reactions are keyed on `day_id`, not on `recipe_id` — agent-invented meals (`recipe_id IS NULL`) still get reactions, which keying on recipe wouldn't allow.
+
+### Lifecycle vs the plan
+
+- **Admin re-generates the same week's plan** → the 7 day rows are delete-then-inserted; `ON DELETE CASCADE` from `meal_plan_days` wipes that plan's reactions automatically. Reactions on *prior* weeks' plans are untouched and continue to feed `recent_reactions` in the agent context.
+- **Admin PATCHes a single day's `meal_name`** → the `day_id` is unchanged, reactions persist. If "Tikka" becomes "Pizza" mid-week the existing reactions effectively re-bind to the new meal. Acceptable for v1.
+
+### Feedback into next week's plan — `household_members[i].recent_reactions`
+
+`_build_agent_context` reads the last **28 days** (constant `_REACTION_WINDOW_DAYS` in [meal_plan/router.py](../backend/app/meal_plan/router.py)) of each member's reactions and attaches them to that member in the agent context. The agent decides how to weight the signal — backend just provides the data:
+
+```python
+"recent_reactions": [
+  {"meal_name": "Chicken Tikka", "recipe_id": "uuid-or-null",
+   "reaction": "liked", "week_start": "2026-05-25"},
+  ...
+]
+```
+
+`recipe_id` is included alongside `meal_name` so the agent can do exact-id matching against `available_recipes` when the prior week's meal came from the cookbook — avoids string-similarity false matches. `null` `recipe_id` means the prior week's meal was agent-invented; agent falls back to `meal_name` match.
+
+Query path: three IN-list lookups (plans in window → days for those plans → reactions for those days). Empty list for members without reactions.
 
 ---
 
@@ -186,8 +211,6 @@ Cross-household access is always **404** so existence isn't leaked.
 | 404 on GET `/meal-plan/{week}` | No plan exists yet for that week | [meal_plan/router.py](../backend/app/meal_plan/router.py) `get_plan` |
 | 404 on PATCH day | Day not found, plan_id mismatch, or cross-household | [meal_plan/router.py](../backend/app/meal_plan/router.py) `update_day` |
 | 404 on POST `/finalize` | Plan not in caller's household | [meal_plan/router.py](../backend/app/meal_plan/router.py) `finalize` |
-| Items missing after finalize | Ingredient had empty name or bad `category` — skipped with a warning log (search `housewise.meal_plan` for "skipping ingredient") | [meal_plan/router.py](../backend/app/meal_plan/router.py) `finalize` |
-| Duplicate items after re-generate + re-finalize | Items from the first finalize aren't cleaned up when `/generate` resets status to draft. Admin reviews the items queue and merges manually. | [meal_plan/router.py](../backend/app/meal_plan/router.py) `finalize` |
 | 502 on `/generate` | Agent returned `reason` with empty `days`, or `len(days) != 7` | [meal_plan/router.py](../backend/app/meal_plan/router.py) `generate` |
 | 500 on import at startup | `ImportError` from `meal_plan_agent` — agent folder missing or has dep failure | [main.py](../backend/app/main.py) sys.path loop; the import is module-level so failures crash boot rather than hide |
 
@@ -197,7 +220,11 @@ Cross-household access is always **404** so existence isn't leaked.
 
 - **`GET /meal-plan/{week}/prices`** — frontend polls this after finalize. Needs `meal_plans.price_results` JSONB column (not added yet).
 - **Background price search task** triggered by finalize. Same blocker as above.
-- **`recipe_history`** table + per-day reactions (`/meal-plan/{id}/react`). No reactions UI yet.
+<!-- recipe_history table is intentionally not coming — reactions live on
+`meal_plan_day_reactions` keyed by day_id; recipe-level history derives via
+JOIN through meal_plan_days. See AI engineer plan note. -->
+
+
 - **Generate as family.** Admin-only; the family screen only shows submit + read, not the generate button.
 - **Submission prefill from last week** ("same busy days as last week" suggestion).
 - **Items dedup against the existing household items.** Finalize appends; admin merges from the items queue.

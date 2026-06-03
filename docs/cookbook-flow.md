@@ -32,6 +32,7 @@ AI agent functions live outside the backend tree under [ai_agents/cookbook-agent
 | POST | `/cookbook/recipes/{id}/approve` | admin | — | yes | Sets `status='approved'`. Idempotent. |
 | POST | `/cookbook/recipes/generate` | any member | `GenerateRecipeRequest` | **no** | Pass-through preview. Returns `RecipePreview` (no `id`/`status`). FE saves via `POST /cookbook/recipes` with `source='ai_generated'`. 502 on agent total failure. |
 | POST | `/cookbook/recipes/extract-photo` | any member | `ExtractPhotoRequest` | **no** | Pass-through preview. Returns `RecipePreview` with optional `reason` for partial extractions. FE saves via `POST /cookbook/recipes` with `source='photo'`. 502 only on no-name failure. |
+| GET | `/cookbook/recipes/{id}/description` | any member | — | yes (cache row) | Per-user AI blurb. Cached in `recipe_personalized_descriptions`; regenerated when `recipe.updated_at > cache.generated_at`. May be `""` on agent failure (still cached). |
 
 ---
 
@@ -156,8 +157,31 @@ If you add a third AI pass-through endpoint, pick one of these two shapes consci
 | Patch (incl. set status) | ✓ | ✗ | ✗ |
 | Delete | ✓ | ✗ | ✗ |
 | Approve | ✓ | ✗ | ✗ |
+| Get personalized description | ✓ (own only) | ✓ (own only) | ✓ (own only) |
 
 Cross-household access is always **404** so existence isn't leaked.
+
+---
+
+## Personalized descriptions
+
+`GET /cookbook/recipes/{id}/description` returns a per-user blurb produced by the `personalize_recipe_description` agent at [ai_agents/cookbook-agent/cookbook_agent.py](../ai_agents/cookbook-agent/cookbook_agent.py). The agent function takes the recipe row, the caller's profile (`display_name` + `health_preferences` + `dietary_preferences`), and the caller's last 5 reactions; returns a short string (or `""` on failure).
+
+LLM calls are slow + costly, so descriptions are cached per `(recipe_id, user_id)` in `public.recipe_personalized_descriptions`. The cache is invalidated by **comparing `cache.generated_at` to `recipe.updated_at`** — any PATCH on the recipe forces every household member's next read to regenerate. No explicit invalidation endpoint, no admin override.
+
+Response shape:
+```json
+{
+  "description": "Hey Maha — this Tikka is one of your favorites...",
+  "generated_at": "2026-06-03T10:15:00Z"
+}
+```
+
+Empty-string responses are **still cached** so a busted recipe doesn't hammer Claude on every detail-screen view. FE should render the recipe without the blurb when `description == ""`. If a previously-failed description should retry later, the cheap fix is a PATCH on the recipe (touches `updated_at` → next read regenerates).
+
+RLS on the cache table is `user_id = auth.uid()` — your description is personal; nobody else (including admin) sees it through PostgREST. Backend uses the service-role client for the lookup so the cache hit path stays single-roundtrip.
+
+Recent history feeding the agent comes from `meal_plan_day_reactions` (last 5 by `created_at DESC` for the caller), joined to `meal_plan_days` for the meal name and to `meal_plans` for the week_start. Works for both cookbook recipes and agent-invented meals (the `meal_name` is the identifier, not `recipe_id`).
 
 ---
 
@@ -181,6 +205,6 @@ Cross-household access is always **404** so existence isn't leaked.
 
 ## What this PR does NOT include (deferred)
 
-- **`recipe_personalized_descriptions` table + endpoint.** No recipe-detail screen yet, so there's nothing to render the per-user description in. When the detail screen lands, that PR adds the table, the cache logic (`generated_at < recipe.updated_at` → stale), and the `GET /cookbook/recipes/{id}/description` endpoint.
+<!-- Personalized descriptions shipped — see "Personalized descriptions" section above. -->
 - **`recipe_history` table.** Tracks "who ate what when" — populated by meal-plan finalize and consumed by a reactions UI. Both belong in the meal-plan finalize PR.
 - **Strict tag enum.** Tags are arbitrary `text[]` today. A future PR can lock them to a known set if needed.

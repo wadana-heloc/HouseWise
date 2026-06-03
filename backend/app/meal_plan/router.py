@@ -1,19 +1,13 @@
-import logging
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
-from typing import Any, get_args
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from starlette.concurrency import run_in_threadpool
 
-from ..items.schemas import ItemCategory
-
-log = logging.getLogger("housewise.meal_plan")
-
-# `item_category` enum values — used to skip bad ingredient categories at
-# finalize time rather than 500ing the whole call.
-_ITEM_CATEGORIES: set[str] = set(get_args(ItemCategory))
+# Window of past plans whose reactions feed the agent's next-week context.
+# 4 prior weeks is enough signal without ballooning prompt size.
+_REACTION_WINDOW_DAYS = 28
 
 # Resolves via the sys.path shim in backend/app/main.py. Module-level so the
 # server fails fast if the AI team breaks the function signature.
@@ -26,6 +20,9 @@ from .schemas import (
     GenerateMealPlanRequest,
     MealPlanOut,
     MemberSubmissionStatus,
+    ReactionList,
+    ReactionOut,
+    ReactionUpsert,
     SubmissionOut,
     SubmissionStatusList,
     SubmissionUpsert,
@@ -40,23 +37,6 @@ def _caller_household(sb, user_id: str) -> tuple[str, str]:
     if not row.data or not row.data.get("household_id"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Caller is not in a household")
     return row.data["household_id"], row.data.get("role") or ""
-
-
-def _parse_qty(raw: Any) -> Decimal:
-    """Best-effort parse of a recipe-style quantity string into Decimal.
-
-    Recipe quantities are free-text ('200', '1.5', 'a pinch'). Items require
-    a positive numeric quantity. On any parse failure or non-positive value,
-    fall back to Decimal(1) — the original raw value is preserved in
-    `items.notes` so admin can still see what the recipe asked for.
-    """
-    if raw is None or raw == "":
-        return Decimal(1)
-    try:
-        v = Decimal(str(raw).strip())
-        return v if v > 0 else Decimal(1)
-    except (InvalidOperation, ValueError):
-        return Decimal(1)
 
 
 def _fetch_plan_with_days(sb, household_id: str, week_start: date) -> dict | None:
@@ -79,6 +59,64 @@ def _fetch_plan_with_days(sb, household_id: str, week_start: date) -> dict | Non
     )
     plan["days"] = days_res.data or []
     return plan
+
+
+def _recent_reactions_by_user(
+    sb, household_id: str, week_start: date
+) -> dict[str, list[dict[str, Any]]]:
+    """Past reactions per member, within the 28-day window before `week_start`.
+
+    Three IN-list queries scoped to household + window. Returns
+    `{user_id: [{meal_name, recipe_id, reaction, week_start}, ...]}`.
+    Empty list for members with no reactions in the window.
+    """
+    window_start_iso = (week_start - timedelta(days=_REACTION_WINDOW_DAYS)).isoformat()
+    week_iso = week_start.isoformat()
+
+    plans = (
+        sb.table("meal_plans")
+        .select("id, week_start")
+        .eq("household_id", household_id)
+        .lt("week_start", week_iso)
+        .gte("week_start", window_start_iso)
+        .execute()
+        .data
+    ) or []
+    if not plans:
+        return {}
+    plan_week_by_id = {p["id"]: p["week_start"] for p in plans}
+
+    days = (
+        sb.table("meal_plan_days")
+        .select("id, plan_id, meal_name, recipe_id")
+        .in_("plan_id", list(plan_week_by_id.keys()))
+        .execute()
+        .data
+    ) or []
+    if not days:
+        return {}
+    day_by_id = {d["id"]: d for d in days}
+
+    reactions = (
+        sb.table("meal_plan_day_reactions")
+        .select("user_id, reaction, day_id")
+        .in_("day_id", list(day_by_id.keys()))
+        .execute()
+        .data
+    ) or []
+
+    by_user: dict[str, list[dict[str, Any]]] = {}
+    for r in reactions:
+        d = day_by_id.get(r["day_id"])
+        if not d:
+            continue
+        by_user.setdefault(r["user_id"], []).append({
+            "meal_name": d["meal_name"],
+            "recipe_id": d.get("recipe_id"),
+            "reaction": r["reaction"],
+            "week_start": plan_week_by_id.get(d["plan_id"]),
+        })
+    return by_user
 
 
 def _build_agent_context(sb, household_id: str, week_start: date) -> dict[str, Any]:
@@ -107,6 +145,8 @@ def _build_agent_context(sb, household_id: str, week_start: date) -> dict[str, A
     ) or []
     subs_by_user = {s["user_id"]: s for s in submissions}
 
+    reactions_by_user = _recent_reactions_by_user(sb, household_id, week_start)
+
     household_members = [
         {
             "display_name": m["display_name"],
@@ -122,6 +162,7 @@ def _build_agent_context(sb, household_id: str, week_start: date) -> dict[str, A
             "busy_days": subs_by_user.get(m["id"], {}).get("busy_days", []),
             "meal_requests": subs_by_user.get(m["id"], {}).get("meal_requests", []),
             "week_notes": subs_by_user.get(m["id"], {}).get("week_notes"),
+            "recent_reactions": reactions_by_user.get(m["id"], []),
         }
         for m in members
     ]
@@ -480,23 +521,16 @@ def update_day(
 @router.post(
     "/{plan_id}/finalize",
     response_model=MealPlanOut,
-    summary="Admin finalizes a plan; ingredients are deduped and added to /items",
+    summary="Admin finalizes a plan (flips status; FE handles shopping list)",
 )
 def finalize(plan_id: UUID, admin: CurrentUser = Depends(require_role("admin"))):
-    """Flip `status` from `'draft'` to `'finalized'` and auto-populate the
-    household shopping list with every ingredient the week needs.
+    """Flip `status` from `'draft'` to `'finalized'`. Idempotent — calling
+    on an already-finalized plan returns 200 with the plan unchanged.
 
-    Idempotent: calling on an already-finalized plan returns 200 with the
-    plan unchanged and does NOT re-insert items (so admin can hit the button
-    twice without ballooning the shopping list).
-
-    Ingredients are sourced per day:
-    - days with `recipe_id` set → `recipes.ingredients`
-    - days with `recipe_id IS NULL` → `meal_plan_days.suggested_ingredients`
-
-    Within-batch dedup is by `lower(name).strip()`. Existing rows in `items`
-    are NOT considered — duplicates against the family's current list are
-    left for admin to merge from the items queue.
+    Finalize does **not** populate the shopping list — the FE reads the
+    plan's days (with their `recipe_id` / `suggested_ingredients`) and
+    decides which ingredients to add to `/items` itself. Keeps the API
+    surface small and lets the FE filter / preview before committing rows.
 
     Errors: 401 missing/invalid bearer. 403 caller is not admin / not in a
     household. 404 plan not in caller's household. 422 `plan_id` not a UUID.
@@ -516,55 +550,129 @@ def finalize(plan_id: UUID, admin: CurrentUser = Depends(require_role("admin")))
     plan_row = plan_res.data[0]
     week_start = date.fromisoformat(plan_row["week_start"])
 
-    if plan_row["status"] == "finalized":
-        return _fetch_plan_with_days(sb, household_id, week_start)
+    if plan_row["status"] != "finalized":
+        sb.table("meal_plans").update({"status": "finalized"}).eq("id", plan_id_s).execute()
 
-    # Collect ingredients from each day. The select joins each meal_plan_days
-    # row to its (optional) recipe so we get its ingredients in one trip.
-    days_res = (
+    return _fetch_plan_with_days(sb, household_id, week_start)
+
+
+# ---------- Reactions (any member, finalized plans only) ----------
+
+
+@router.post(
+    "/{plan_id}/react",
+    response_model=ReactionOut,
+    summary="Set the caller's reaction on one day of a finalized plan",
+)
+def react(
+    plan_id: UUID,
+    body: ReactionUpsert,
+    user: CurrentUser = Depends(current_user),
+):
+    """Upsert the caller's reaction on a single day. Two states only:
+    `'liked'` / `'disliked'`. Re-tapping the other thumb flips the value;
+    re-tapping the same thumb is a no-op.
+
+    Only allowed when the plan is `status='finalized'`. Drafts return 409.
+
+    Errors: 401 missing/invalid bearer. 403 caller not in a household.
+    404 plan not in caller's household, or `day_id` doesn't belong to
+    `plan_id`. 409 plan is still draft. 422 invalid reaction enum or
+    non-UUID path/body params.
+    """
+    sb = get_supabase()
+    household_id, _ = _caller_household(sb, user.id)
+    plan_id_s = str(plan_id)
+    day_id_s = str(body.day_id)
+
+    plan_res = (
+        sb.table("meal_plans")
+        .select("id, household_id, status")
+        .eq("id", plan_id_s)
+        .execute()
+    )
+    if not plan_res.data or plan_res.data[0]["household_id"] != household_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Plan not found")
+    if plan_res.data[0]["status"] != "finalized":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Plan must be finalized before members can react",
+        )
+
+    day_res = (
         sb.table("meal_plan_days")
-        .select("recipe_id, suggested_ingredients, recipes(ingredients)")
+        .select("id")
+        .eq("id", day_id_s)
         .eq("plan_id", plan_id_s)
         .execute()
     )
-    seen: dict[str, dict[str, Any]] = {}
-    for d in days_res.data or []:
-        if d.get("recipe_id") and d.get("recipes"):
-            ings = d["recipes"].get("ingredients") or []
-        else:
-            ings = d.get("suggested_ingredients") or []
-        for ing in ings:
-            name = (ing.get("name") or "").strip()
-            category = ing.get("category")
-            if not name or category not in _ITEM_CATEGORIES:
-                log.warning(
-                    "skipping ingredient with bad name/category: %r in plan %s",
-                    ing, plan_id_s,
-                )
-                continue
-            key = name.lower()
-            if key not in seen:
-                seen[key] = ing
+    if not day_res.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Day not found")
 
-    if seen:
-        items_payload = [
-            {
-                "household_id": household_id,
-                "name": ing["name"],
-                "category": ing["category"],
-                "quantity": str(_parse_qty(ing.get("quantity"))),
-                "unit": "units",
-                "status": "pending",
-                "notes": (
-                    f"From meal plan: {week_start.isoformat()} "
-                    f"({ing.get('quantity') or '?'} {ing.get('unit') or ''})".strip()
-                ),
-                "added_by": admin.id,
-            }
-            for ing in seen.values()
-        ]
-        sb.table("items").insert(items_payload).execute()
+    sb.table("meal_plan_day_reactions").upsert(
+        {
+            "day_id": day_id_s,
+            "user_id": user.id,
+            "reaction": body.reaction,
+        },
+        on_conflict="day_id,user_id",
+    ).execute()
 
-    sb.table("meal_plans").update({"status": "finalized"}).eq("id", plan_id_s).execute()
+    saved = (
+        sb.table("meal_plan_day_reactions")
+        .select("*")
+        .eq("day_id", day_id_s)
+        .eq("user_id", user.id)
+        .single()
+        .execute()
+    )
+    return saved.data
 
-    return _fetch_plan_with_days(sb, household_id, week_start)
+
+@router.get(
+    "/{plan_id}/reactions",
+    response_model=ReactionList,
+    summary="List all reactions across every day of this plan",
+)
+def list_reactions(plan_id: UUID, user: CurrentUser = Depends(current_user)):
+    """Returns every reaction from every household member across all 7 days.
+    FE filters by `day_id` / `user_id` locally to render the thumbs.
+
+    Errors: 401 missing/invalid bearer. 403 caller not in a household.
+    404 plan not in caller's household.
+    """
+    sb = get_supabase()
+    household_id, _ = _caller_household(sb, user.id)
+    plan_id_s = str(plan_id)
+
+    plan_res = (
+        sb.table("meal_plans")
+        .select("id, household_id")
+        .eq("id", plan_id_s)
+        .execute()
+    )
+    if not plan_res.data or plan_res.data[0]["household_id"] != household_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Plan not found")
+
+    day_ids = [
+        d["id"]
+        for d in (
+            sb.table("meal_plan_days")
+            .select("id")
+            .eq("plan_id", plan_id_s)
+            .execute()
+            .data
+            or []
+        )
+    ]
+    if not day_ids:
+        return ReactionList(plan_id=plan_id_s, reactions=[])
+
+    reactions = (
+        sb.table("meal_plan_day_reactions")
+        .select("*")
+        .in_("day_id", day_ids)
+        .execute()
+        .data
+    ) or []
+    return ReactionList(plan_id=plan_id_s, reactions=reactions)

@@ -77,6 +77,18 @@ class ExtractPhotoRequest(BaseModel):
     media_type: Literal["image/jpeg", "image/png", "image/webp"]
 
 
+class PersonalizedDescription(BaseModel):
+    """Per-user, AI-generated description of a recipe. Cached in
+    `recipe_personalized_descriptions`; regenerated when the recipe's
+    `updated_at` advances past the cache row's `generated_at`. Empty string
+    means the agent couldn't produce one — FE renders the recipe without
+    the blurb in that case.
+    """
+
+    description: str
+    generated_at: datetime
+
+
 class RecipePreview(BaseModel):
     """AI-generated / photo-extracted recipe data — NOT yet persisted.
 

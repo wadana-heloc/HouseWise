@@ -7,6 +7,7 @@ from ..items.schemas import ItemCategory
 
 PrepLabel = Literal["prep", "reheat", "fresh"]
 MealPlanStatus = Literal["draft", "finalized"]
+MealPlanReaction = Literal["liked", "disliked"]
 
 
 class MealRequest(BaseModel):
@@ -100,3 +101,22 @@ class DayUpdate(BaseModel):
         if not self.model_fields_set:
             raise ValueError("PATCH body must include at least one field")
         return self
+
+
+class ReactionUpsert(BaseModel):
+    day_id: str
+    reaction: MealPlanReaction
+
+
+class ReactionOut(BaseModel):
+    id: str
+    day_id: str
+    user_id: str
+    reaction: MealPlanReaction
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReactionList(BaseModel):
+    plan_id: str
+    reactions: list[ReactionOut]
