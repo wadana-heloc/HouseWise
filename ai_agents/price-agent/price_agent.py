@@ -8,15 +8,7 @@ import json
 
 import anthropic
 
-from price_config import (
-    PRICE_BATCH_SIZE,
-    PRICE_MODEL_NAME,
-    PRICE_SYSTEM_PROMPT,
-    PRICE_TOKENS_BASE_OVERHEAD,
-    PRICE_TOKENS_MAXIMUM,
-    PRICE_TOKENS_MINIMUM,
-    PRICE_TOKENS_PER_ITEM_PER_STORE,
-)
+from price_config import PRICE_BATCH_SIZE, PRICE_MODEL_NAME, PRICE_SYSTEM_PROMPT, PRICE_TOKENS_MAXIMUM
 
 # anthropic.Anthropic — reads ANTHROPIC_API_KEY from the environment automatically
 client = anthropic.Anthropic()
@@ -30,9 +22,9 @@ def build_user_prompt(items: list[str], stores: list[str]) -> str:
     #          The JSON schema lives in PRICE_SYSTEM_PROMPT so it is cached.
     # Returns: str — a short natural-language prompt
     # Input:   items=["eggs 12pcs"], stores=["https://www.carrefouruae.com"]
-    # Output:  "What are the current prices of eggs 12pcs at these UAE stores?..."
+    # Output:  "What are the current prices in AED of eggs 12pcs at these UAE stores?..."
 
-    # str — derive a readable store list by stripping protocol prefix
+    # str
     stores_formatted = "\n".join(
         f"- {store_url.replace('https://www.', '').replace('https://', '')}"
         for store_url in stores
@@ -47,29 +39,65 @@ def build_user_prompt(items: list[str], stores: list[str]) -> str:
 Map each price you find to the matching store URL in the output JSON."""
 
 
-def _calculate_max_tokens(item_count: int, store_count: int) -> int:
-    # What:    Calculates a token budget for the expected JSON output size.
-    #          Formula: base overhead + (items × stores × tokens per pair),
-    #          clamped between PRICE_TOKENS_MINIMUM and PRICE_TOKENS_MAXIMUM.
-    #          The minimum guards against truncation on tiny batches.
-    #          The maximum respects the model's output token limit.
-    # Returns: int — the max_tokens value to pass to the API
-    # Input:   item_count=4, store_count=4
-    # Output:  2200  (clamp(600 + 4*4*100, 1500, 8000))
+def _compute_summary_fields(result: dict) -> dict:
+    # What:    Derives cheapest_store_url, cheapest_price, best_value_store_url,
+    #          best_value_unit_price, and best_value_unit from the prices array
+    #          in Python — not the model — so the calculation is always deterministic
+    #          and null-safe. Falls back to cheapest raw price store when no unit
+    #          prices are available.
+    # Returns: dict — the original result dict with the five summary fields added
+    # Input:   result={"item": "milk 1L", "prices": [{"store_url": "...", "price": 5.5, ...}]}
+    # Output:  {"item": "milk 1L", "prices": [...], "cheapest_store_url": "...", "cheapest_price": 5.5, ...}
 
-    # int
-    calculated_budget = PRICE_TOKENS_BASE_OVERHEAD + (item_count * store_count * PRICE_TOKENS_PER_ITEM_PER_STORE)
+    # list[dict]
+    prices = result.get("prices", [])
 
-    return min(PRICE_TOKENS_MAXIMUM, max(PRICE_TOKENS_MINIMUM, calculated_budget))
+    # list[tuple[float, str]]
+    valid_raw = [(p["price"], p["store_url"]) for p in prices if p.get("price") is not None]
+
+    if valid_raw:
+        # float, str
+        cheapest_price, cheapest_store_url = min(valid_raw)
+    else:
+        # float or None, str or None
+        cheapest_price, cheapest_store_url = None, None
+
+    # list[tuple[float, str, str or None]]
+    valid_unit = [
+        (p["unit_price"], p["store_url"], p.get("unit"))
+        for p in prices
+        if p.get("unit_price") is not None
+    ]
+
+    if valid_unit:
+        # float, str, str or None
+        best_unit_price, best_value_store_url, best_value_unit = min(valid_unit)
+    else:
+        # no unit prices available — fall back to cheapest raw price store
+        # float or None
+        best_unit_price = None
+        # str or None
+        best_value_store_url = cheapest_store_url
+        # str or None
+        best_value_unit = None
+
+    return {
+        **result,
+        "cheapest_store_url": cheapest_store_url,
+        "cheapest_price": cheapest_price,
+        "best_value_store_url": best_value_store_url,
+        "best_value_unit_price": best_unit_price,
+        "best_value_unit": best_value_unit,
+    }
 
 
 def _build_null_result_for_item(item: str, stores: list[str]) -> dict:
     # What:    Builds a null-filled result dict for a single item.
     #          Used by the error fallback when JSON parsing fails so the
     #          caller always receives a consistent shape regardless of errors.
-    # Returns: dict — a result entry with all price and unit_price fields set to None
+    # Returns: dict — a result entry with all price and summary fields set to None
     # Input:   item="milk 1L", stores=["https://www.carrefouruae.com"]
-    # Output:  {"item": "milk 1L", "prices": [...nulls...], "cheapest_store_url": None, ..., "best_value_unit": None}
+    # Output:  {"item": "milk 1L", "prices": [...nulls...], "cheapest_store_url": None, ...}
 
     # list[dict]
     null_prices = [
@@ -160,19 +188,17 @@ def _call_agent(items: list[str], stores: list[str]) -> list[dict]:
     # What:    Makes a single Anthropic API call for the given items and stores.
     #          Passes the system prompt as a cacheable content block so repeated
     #          calls reuse the cached prompt at 10% of normal input token cost.
-    #          Calculates max_tokens dynamically to avoid over-reserving.
+    #          Runs the JSON cleaning pipeline on the response, then delegates
+    #          summary field computation to _compute_summary_fields.
     #          Falls back to null-filled results if the model returns unparseable text.
-    # Returns: list[dict] — one dict per item with price data across all stores
+    # Returns: list[dict] — one dict per item with price data and computed summary fields
     # Input:   items=["milk 1L"], stores=["https://www.carrefouruae.com"]
     # Output:  [{"item": "milk 1L", "prices": [...], "cheapest_store_url": "...", "cheapest_price": 5.5}]
-
-    # int — tight token budget sized to the actual batch
-    calculated_max_tokens = _calculate_max_tokens(len(items), len(stores))
 
     # anthropic.types.Message
     response = client.messages.create(
         model=PRICE_MODEL_NAME,
-        max_tokens=calculated_max_tokens,
+        max_tokens=PRICE_TOKENS_MAXIMUM,
         system=[
             {
                 "type": "text",
@@ -196,7 +222,9 @@ def _call_agent(items: list[str], stores: list[str]) -> list[dict]:
     cleaned_response_text = _extract_json_array(fence_stripped_text)
 
     try:
-        return json.loads(cleaned_response_text)
+        # list[dict]
+        parsed = json.loads(cleaned_response_text)
+        return [_compute_summary_fields(r) for r in parsed]
     except json.JSONDecodeError:
         return [_build_null_result_for_item(item, stores) for item in items]
 

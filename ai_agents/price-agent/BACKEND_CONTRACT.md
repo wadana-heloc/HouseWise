@@ -8,9 +8,12 @@ This document defines how the backend calls the price agent, what it must pass i
 
 ```python
 from price_agent import search_grocery_prices
+from price_config import STORE_URLS
 
-results = search_grocery_prices(items, stores)
+results = search_grocery_prices(items=["milk 1L", "eggs 12pcs"], stores=STORE_URLS)
 ```
+
+**Always import `STORE_URLS` from `price_config`** — do not hardcode store URLs. `STORE_URLS` is the canonical list that matches the agent's internal search strategy. Passing different URL variants will cause a mismatch between what the model searches and what appears in the output.
 
 The function is **synchronous and blocking**. It makes one or more Anthropic API calls (with web search) and returns only when all results are ready. Call it from a background job or task queue — never from a request handler directly.
 
@@ -27,7 +30,7 @@ A list of grocery item strings to search for.
 | Type | `list[str]` |
 | Min length | 1 |
 | Max length | No hard limit — batched automatically at 15 items per API call |
-| Item format | Plain English description, include quantity/unit where relevant |
+| Item format | Plain English description; include quantity/unit where relevant |
 
 **Examples:**
 ```python
@@ -38,24 +41,21 @@ A list of grocery item strings to search for.
 
 ### `stores` — `list[str]`
 
-A list of store URLs. These are used as output keys — results are mapped back to these exact URLs.
+Pass `STORE_URLS` from `price_config`. The four supported stores and their canonical URLs are:
 
-| Rule | Detail |
-|---|---|
-| Type | `list[str]` |
-| Format | Full URL with scheme, e.g. `https://www.carrefouruae.com` |
-| Min length | 1 |
-| Validation | Not validated by the agent — pass correct URLs from the backend |
-
-**Supported UAE stores (tested):**
 ```python
+from price_config import STORE_URLS
+
+# STORE_URLS expands to:
 [
+    "https://www.spinneys.com/en-ae/",
     "https://www.carrefouruae.com",
-    "https://www.spinneys.com",
-    "https://www.unioncoop.com",
-    "https://www.luluhypermarket.com"
+    "https://www.unioncoop.ae",
+    "https://gcc.luluhypermarket.com/en-ae",
 ]
 ```
+
+These exact strings are what will appear in `store_url` fields in the output. If you pass a different variant (e.g. `https://www.spinneys.com`), the output `store_url` values will not match.
 
 ---
 
@@ -72,23 +72,43 @@ One dict per item. The list is in the **same order as `items`**. Every store in 
   "item": "milk 1L",
   "prices": [
     {
+      "store_url": "https://www.spinneys.com/en-ae/",
+      "store_name": "Spinneys",
+      "price": 5.50,
+      "currency": "AED",
+      "product_url": "https://www.spinneys.com/en-ae/catalogue/almarai-full-fat-milk-1l/",
+      "product_name_as_found": "Almarai Full Fat Milk 1L",
+      "unit_price": 0.55,
+      "unit": "AED/100ml"
+    },
+    {
       "store_url": "https://www.carrefouruae.com",
       "store_name": "Carrefour UAE",
       "price": 4.29,
       "currency": "AED",
-      "product_url": "https://www.carrefouruae.com/mafuae/en/uht-milk-full-fat/crf-uht-milk-full-f-1l/p/2190706",
+      "product_url": "https://www.carrefouruae.com/mafuae/en/uht-milk-full-fat/p/2190706",
       "product_name_as_found": "Carrefour Long Life UHT Full Fat Milk 1L",
       "unit_price": 0.429,
       "unit": "AED/100ml"
     },
     {
-      "store_url": "https://www.spinneys.com",
-      "store_name": "Spinneys",
-      "price": 5.50,
+      "store_url": "https://www.unioncoop.ae",
+      "store_name": "Union Coop",
+      "price": null,
       "currency": "AED",
-      "product_url": "https://www.spinneys.com/en-ae/catalogue/almarai-full-fat-milk-1l_12345/",
-      "product_name_as_found": "Almarai Full Fat Milk 1L",
-      "unit_price": 0.55,
+      "product_url": null,
+      "product_name_as_found": null,
+      "unit_price": null,
+      "unit": null
+    },
+    {
+      "store_url": "https://gcc.luluhypermarket.com/en-ae",
+      "store_name": "LuLu Hypermarket",
+      "price": 4.75,
+      "currency": "AED",
+      "product_url": "https://gcc.luluhypermarket.com/en-ae/milk/p/123456",
+      "product_name_as_found": "Almarai Long Life Full Fat Milk 1L",
+      "unit_price": 0.475,
       "unit": "AED/100ml"
     }
   ],
@@ -100,59 +120,69 @@ One dict per item. The list is in the **same order as `items`**. Every store in 
 }
 ```
 
-### Field reference:
+---
 
-#### Per-item fields
+## Field Reference
+
+### Per-item fields
 
 | Field | Type | Nullable | Description |
 |---|---|---|---|
-| `item` | `str` | No | The item string as passed in (may be capitalised by the model) |
-| `prices` | `list[dict]` | No | One entry per store — always present, never an empty list |
+| `item` | `str` | No | The item string as passed in |
+| `prices` | `list[dict]` | No | One entry per store — always 4 entries when using `STORE_URLS` |
 | `cheapest_store_url` | `str \| null` | Yes | `store_url` of the lowest raw price. `null` if all prices are null |
 | `cheapest_price` | `float \| null` | Yes | The lowest raw price in AED. `null` if all prices are null |
-| `best_value_store_url` | `str \| null` | Yes | `store_url` with the lowest unit price (best price per kg/L/piece). `null` if no unit prices found |
-| `best_value_unit_price` | `float \| null` | Yes | The lowest unit price. `null` if no unit prices found |
-| `best_value_unit` | `str \| null` | Yes | The unit used for comparison, e.g. `"AED/100ml"`, `"AED/kg"`, `"AED/piece"`. `null` if not found |
+| `best_value_store_url` | `str \| null` | Yes | `store_url` with the lowest unit price. Falls back to `cheapest_store_url` if no unit prices are available. `null` only if all prices are also null |
+| `best_value_unit_price` | `float \| null` | Yes | The lowest unit price. `null` if no unit prices could be determined |
+| `best_value_unit` | `str \| null` | Yes | Unit string for `best_value_unit_price`, e.g. `"AED/100ml"`, `"AED/kg"`, `"AED/piece"`. `null` if `best_value_unit_price` is null |
 
-#### Per-store fields (`prices[]`)
+> **`cheapest` vs `best_value`:** `cheapest_price` is the lowest raw price — use this for headline display. `best_value_unit_price` is the lowest price-per-unit — use this when comparing value across stores that may sell different pack sizes. They will often point to the same store, but not always (e.g. a 5kg bag at one store vs a 1kg bag at another).
+
+> **`best_value_store_url` fallback:** if the model cannot determine any unit prices (all `unit_price` fields are null), `best_value_store_url` falls back to the same store as `cheapest_store_url`. In this case `best_value_unit_price` and `best_value_unit` will still be null.
+
+---
+
+### Per-store fields (`prices[]`)
 
 | Field | Type | Nullable | Description |
 |---|---|---|---|
 | `store_url` | `str` | No | Exactly matches the URL passed in `stores` |
-| `store_name` | `str` | No | Human-readable store name inferred by the model (e.g. `"Spinneys"`) |
-| `price` | `float \| null` | Yes | Raw price in AED for the product found. `null` if not found |
+| `store_name` | `str` | No | Human-readable store name e.g. `"Spinneys"`, `"Carrefour UAE"` |
+| `price` | `float \| null` | Yes | Raw price in AED. `null` if not found this run |
 | `currency` | `str` | No | Always `"AED"` |
-| `product_url` | `str \| null` | Yes | Direct URL to the product page. `null` if not found |
+| `product_url` | `str \| null` | Yes | Direct URL to the product page where the price was found. `null` if not found |
 | `product_name_as_found` | `str \| null` | Yes | Exact product name from the source. `null` if not found |
-| `unit_price` | `float \| null` | Yes | Price per standard unit (e.g. per 100ml, per kg, per piece). `null` if size cannot be determined |
-| `unit` | `str \| null` | Yes | Unit string for `unit_price`, e.g. `"AED/100ml"`, `"AED/kg"`, `"AED/piece"`. `null` if `unit_price` is null |
+| `unit_price` | `float \| null` | Yes | Price per standard unit. `null` if pack size cannot be determined |
+| `unit` | `str \| null` | Yes | Unit for `unit_price`. `null` if `unit_price` is null |
 
-#### Unit calculation rules
+---
 
-The agent normalises units consistently across stores so `unit_price` values are always directly comparable:
+### Unit calculation rules
 
-| Item type | Unit used | Example |
+Unit prices are computed by the model and normalised consistently across stores:
+
+| Item type | Unit | Example |
 |---|---|---|
 | Liquids (milk, juice, oil) | `AED/100ml` | 500ml at AED 25 → `unit_price: 5.0` |
-| Dry goods by weight (rice, flour) | `AED/kg` | 5kg at AED 30 → `unit_price: 6.0` |
+| Dry goods by weight (rice, flour, sugar) | `AED/kg` | 5kg at AED 30 → `unit_price: 6.0` |
 | Items sold by count (eggs) | `AED/piece` | 12 eggs at AED 12 → `unit_price: 1.0` |
-| Snacks/confectionery | `AED/100g` | 43g bar at AED 6.5 → `unit_price: 15.12` |
-
-> **`cheapest` vs `best_value`:** `cheapest_price` is the lowest raw price — useful when the backend displays a headline price. `best_value_unit_price` is the lowest price-per-unit — use this for value comparison when the same item may be sold in different sizes across stores.
+| Snacks / confectionery | `AED/100g` | 43g bar at AED 6.5 → `unit_price: 15.12` |
+| Fresh produce | `AED/kg` | Cucumber per kg at AED 3.5 → `unit_price: 3.5` |
+| Unknown size | `null` | `unit_price: null`, `unit: null` |
 
 ---
 
 ## Null Handling
 
-The backend **must always receive a response** — the agent never raises an exception to the caller. When a price cannot be found or the API response cannot be parsed, the agent returns a null-filled entry for that item:
+The backend **always receives a response** — the agent never raises an exception to the caller. When a price cannot be found or the API response cannot be parsed, the agent returns a null-filled entry for that item:
 
 ```json
 {
   "item": "some item",
   "prices": [
     {
-      "store_url": "https://www.carrefouruae.com",
-      "store_name": "https://www.carrefouruae.com",
+      "store_url": "https://www.spinneys.com/en-ae/",
+      "store_name": "https://www.spinneys.com/en-ae/",
       "price": null,
       "currency": "AED",
       "product_url": null,
@@ -169,7 +199,9 @@ The backend **must always receive a response** — the agent never raises an exc
 }
 ```
 
-**How to detect a null-fallback result:** `store_name` equals `store_url` (the raw URL). In a successful result, `store_name` is always a short human-readable name like `"Spinneys"`.
+**How to detect a null-fallback result:** `store_name` equals `store_url` (the raw URL string). In a successful result `store_name` is always a short human name like `"Spinneys"`. If all entries have `store_name == store_url`, the entire response is a fallback — treat it as a failed call and retry or skip.
+
+**A per-store null is normal.** A single store having `price: null` while others have prices is expected — it means the agent could not confirm a price at that store this run, not that the item is unavailable there. See `LIMITATIONS.md` for why this happens.
 
 ---
 
@@ -184,19 +216,17 @@ The agent batches automatically — the backend does not need to handle this.
 | 31–45 | 3 calls |
 | N items | `ceil(N / 15)` calls |
 
-Results from all batches are merged into a single flat list before returning.
+Results from all batches are merged into a single flat list before returning, in the same order as the input `items`.
 
 ---
 
 ## Environment Variable
 
-The agent requires `ANTHROPIC_API_KEY` to be set in the environment before `search_grocery_prices` is imported.
+The agent requires `ANTHROPIC_API_KEY` to be set in the environment before calling the function.
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
 ```
-
-If the key is missing the agent will raise `anthropic.AuthenticationError` at import time.
 
 ---
 
@@ -204,29 +234,19 @@ If the key is missing the agent will raise `anthropic.AuthenticationError` at im
 
 ```python
 from price_agent import search_grocery_prices
+from price_config import STORE_URLS
 
 results = search_grocery_prices(
-    items=["kinder bueno", "milk 1L"],
-    stores=[
-        "https://www.spinneys.com",
-        "https://www.carrefouruae.com"
-    ]
+    items=["basmati rice", "milk 1L"],
+    stores=STORE_URLS,
 )
 
 for entry in results:
     print(f"{entry['item']}")
-    print(f"  cheapest raw price : {entry['cheapest_price']} AED at {entry['cheapest_store_url']}")
-    print(f"  best value per unit: {entry['best_value_unit_price']} {entry['best_value_unit']} at {entry['best_value_store_url']}")
-```
-
-**Expected output:**
-```
-Kinder Bueno
-  cheapest raw price : 6.5 AED at https://www.spinneys.com
-  best value per unit: 15.12 AED/100g at https://www.spinneys.com
-milk 1L
-  cheapest raw price : 4.29 AED at https://www.carrefouruae.com
-  best value per unit: 0.429 AED/100ml at https://www.carrefouruae.com
+    print(f"  cheapest : {entry['cheapest_price']} AED at {entry['cheapest_store_url']}")
+    print(f"  best value: {entry['best_value_unit_price']} {entry['best_value_unit']} at {entry['best_value_store_url']}")
+    for p in entry["prices"]:
+        print(f"  {p['store_name']}: {p['price']} AED — {p['product_name_as_found']}")
 ```
 
 ---
@@ -234,6 +254,10 @@ milk 1L
 ## What the Agent Does NOT Do
 
 - Does not store results — persistence is the backend's responsibility
-- Does not validate store URLs — pass correct URLs
+- Does not guarantee prices are current — data comes from web search and may be hours old
+- Does not flag whether a price is promotional or regular
+- Does not validate store URLs — always pass `STORE_URLS` from `price_config`
 - Does not maintain state between calls — fully stateless
-- Does not guarantee prices are real-time — prices are sourced from web search results which may be hours or days old
+- Does not raise exceptions on failure — returns null-filled results instead (see null handling above)
+
+See `LIMITATIONS.md` for a full breakdown of known limitations and recommended workarounds.

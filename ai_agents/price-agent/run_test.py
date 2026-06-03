@@ -8,60 +8,27 @@ load_dotenv()
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-import json
-import anthropic
-from price_config import PRICE_MODEL_NAME, PRICE_SYSTEM_PROMPT, PRICE_TOKENS_MINIMUM
-from price_agent import build_user_prompt
+from price_config import STORE_URLS
+from price_agent import search_grocery_prices
 
-client = anthropic.Anthropic()
+items = ["Basmati Rice"]
 
-items = ["Basmati Rice", "Cucumber", "Mozzarella Cheese (shredded)"]
-stores = [
-    "https://www.spinneys.com",
-    "https://www.carrefouruae.com",
-    "https://www.unioncoop.com",
-    "https://www.luluhypermarket.com",
-]
-
-print(f"Running: {len(items)} items × {len(stores)} stores")
+print(f"Running: {len(items)} items × {len(STORE_URLS)} stores")
 print(f"Items: {items}")
 print()
 
-response = client.messages.create(
-    model=PRICE_MODEL_NAME,
-    max_tokens=PRICE_TOKENS_MINIMUM,
-    system=[{"type": "text", "text": PRICE_SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
-    tools=[{"type": "web_search_20250305", "name": "web_search"}],
-    messages=[{"role": "user", "content": build_user_prompt(items, stores)}],
-)
+results = search_grocery_prices(items, STORE_URLS)
 
-print("=== USAGE ===")
-print(response.usage)
-print()
-
-# extract and print results
-result_text = ""
-for block in response.content:
-    if block.type == "text":
-        result_text = block.text.strip()
-
-if result_text.startswith("```"):
-    result_text = result_text.split("```")[1]
-    if result_text.startswith("json"):
-        result_text = result_text[4:]
-result_text = result_text.strip()
-start = result_text.find("[")
-end = result_text.rfind("]")
-if start != -1 and end != -1:
-    result_text = result_text[start:end+1]
-
-try:
-    results = json.loads(result_text)
-    print("=== RESULTS ===")
-    for entry in results:
-        print(f"\n{entry['item']} - cheapest: {entry['cheapest_price']} AED at {entry['cheapest_store_url']}")
-        for p in entry["prices"]:
-            print(f"  {p['store_name']}: {p['price']} AED")
-except json.JSONDecodeError as e:
-    print(f"JSON parse error: {e}")
-    print("Raw response:", result_text[:500])
+print("=== RESULTS ===")
+for entry in results:
+    print(f"\n{entry['item']}")
+    print(f"  cheapest raw price : {entry['cheapest_price']} AED at {entry['cheapest_store_url']}")
+    print(f"  best value per unit: {entry['best_value_unit_price']} {entry['best_value_unit']} at {entry['best_value_store_url']}")
+    print(f"  {'Store':<25} {'Price':>10}  {'Unit Price':>12}  {'Unit':<14}  Product")
+    print(f"  {'-'*25}  {'-'*9}  {'-'*11}  {'-'*13}  {'-'*40}")
+    for p in entry["prices"]:
+        price_str = f"{p['price']:.2f} AED" if p["price"] is not None else "n/a"
+        unit_price_str = f"{p['unit_price']:.4f}" if p["unit_price"] is not None else "n/a"
+        unit_str = p["unit"] or "n/a"
+        product_str = (p["product_name_as_found"] or "n/a")[:50]
+        print(f"  {p['store_name']:<25} {price_str:>10}  {unit_price_str:>12}  {unit_str:<14}  {product_str}")
