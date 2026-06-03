@@ -157,6 +157,18 @@ export default function HomeScreen() {
                             sub="Stores & health prefs"
                             onPress={() => router.push('/settings')}
                         />
+                        <QuickAction
+                            icon="book-outline"
+                            label="Cookbook"
+                            sub="Manage recipes"
+                            onPress={() => router.push('/cookbook')}
+                        />
+                        <QuickAction
+                            icon="calendar-outline"
+                            label="Meal Plan"
+                            sub="Plan the week"
+                            onPress={() => router.push('/meal-plan')}
+                        />
                     </View>
                 </View>
 

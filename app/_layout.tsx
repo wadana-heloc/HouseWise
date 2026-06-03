@@ -114,8 +114,16 @@ export default function RootLayout() {
       <Stack.Screen name="manage-members" />
       <Stack.Screen name="edit-profile" />
       <Stack.Screen name="health-preferences" />
+      <Stack.Screen name="dietary-preferences" />
       <Stack.Screen name="family-members" />
       <Stack.Screen name="preferred-stores" />
+      <Stack.Screen name="cookbook" />
+      <Stack.Screen name="cookbook-detail" />
+      <Stack.Screen name="cookbook-add" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="meal-plan" />
+      <Stack.Screen name="meal-plan-submit" />
+      <Stack.Screen name="meal-plan-review" />
+      <Stack.Screen name="meal-plan-view" />
     </Stack>
   );
 }

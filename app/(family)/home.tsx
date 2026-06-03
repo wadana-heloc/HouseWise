@@ -156,8 +156,18 @@ export default function FamilyHomeScreen() {
               sub="Photograph product"
               onPress={() => router.push('/image-scan')}
             />
-            <LockedAction label="Weekly report" sub="Admin only" />
-            <LockedAction label="Settings"      sub="Admin only" />
+            <QuickAction
+              icon="book-outline"
+              label="Cookbook"
+              sub="Browse recipes"
+              onPress={() => router.push('/cookbook')}
+            />
+            <QuickAction
+              icon="calendar-outline"
+              label="This week"
+              sub="Meal plan"
+              onPress={() => router.push('/meal-plan')}
+            />
           </View>
         </View>
 

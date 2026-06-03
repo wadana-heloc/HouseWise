@@ -12,7 +12,8 @@ const MENU_SECTIONS = [
     items: [
       { icon: 'people-outline',     label: 'Members',            route: '/family-members' },
       { icon: 'storefront-outline', label: 'Preferred stores',   route: '/preferred-stores' },
-      { icon: 'heart-outline',      label: 'Health preferences', route: '/health-preferences' },
+      { icon: 'heart-outline',      label: 'Health preferences',   route: '/health-preferences' },
+      { icon: 'restaurant-outline', label: 'Dietary preferences', route: '/dietary-preferences' },
     ],
   },
   {
