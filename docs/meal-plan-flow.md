@@ -24,14 +24,21 @@ The AI agent function lives outside the backend tree under [ai_agents/meal-plan-
 | GET | `/meal-plan/{week_start}` | any member | — | Plan + 7 days sorted by `day_of_week`. 404 if no plan yet. |
 | POST | `/meal-plan/generate` | admin | `GenerateMealPlanRequest` | Calls `generate_weekly_plan` agent. Upserts plan; replaces 7 day rows. 502 on total agent failure. |
 | PATCH | `/meal-plan/{plan_id}/days/{day_id}` | admin | `DayUpdate` (≥1 field) | Edit one day's `meal_name`, `prep_label`, `notes`, or `recipe_id`. Returns the full updated plan. |
+| POST | `/meal-plan/{plan_id}/finalize` | admin | — | Flip `status` to `'finalized'` and auto-populate the shopping list with the week's ingredients (deduped within-batch). Idempotent. |
 
 ---
 
-## Approval / lifecycle
+## Lifecycle
 
-There is no approval workflow this PR — admin generates a plan and it's immediately visible to the whole household. The `status` enum (`'draft'` / `'finalized'`) is in place for the future finalize step (auto-populates `public.items` and fires the price search), but nothing writes `'finalized'` yet.
+```
+admin POST /generate ──► status='draft'  ──► admin POST /{id}/finalize ──► status='finalized'
+                        7 day rows                                         items inserted (deduped)
+                        visible to all                                     visible to all
+```
 
-`POST /meal-plan/generate` for an existing week **replaces** the draft — the plan row is upserted (`on_conflict='household_id,week_start'`) and the 7 day rows are deleted and re-inserted. There is no separate "regenerate" endpoint.
+There is no admin approval gate. The status flag exists so the FE can render a "Draft" badge before the admin commits, and so the backend has a no-op signal for idempotent re-finalize. **Backend visibility is the same in both states** — the FE chooses what to render based on the `status` field already in the response.
+
+`POST /meal-plan/generate` for an existing week **replaces** the plan — the row is upserted (`on_conflict='household_id,week_start'`) and the 7 day rows are deleted and re-inserted. If the plan was already `'finalized'`, generate resets it to `'draft'` (clean slate for re-finalize). Items already inserted by the previous finalize are NOT cleaned up automatically — admin curates the items queue.
 
 ---
 
@@ -108,6 +115,33 @@ context = {
 
 ---
 
+## Finalize — what gets inserted into `items`
+
+`POST /meal-plan/{plan_id}/finalize` collects ingredients from each of the 7 days:
+
+- **Days with `recipe_id` set** → pull from `recipes.ingredients` (joined in one query).
+- **Days with `recipe_id IS NULL`** → use `meal_plan_days.suggested_ingredients` (already JSONB on the row).
+
+Then dedup within-batch by `lower(name).strip()`. First occurrence wins so the original casing is preserved. One `public.items` INSERT per unique name.
+
+**Inserted row shape:**
+
+| column | value |
+| --- | --- |
+| `name` | `ingredient.name` (original casing) |
+| `category` | `ingredient.category` (already a valid `item_category` enum) |
+| `quantity` | parsed `Decimal` from `ingredient.quantity`; falls back to `1` if the recipe used a non-numeric string like "a pinch" |
+| `unit` | hardcoded `'units'` — recipe units (cups, tbsp, ...) don't map to the strict `ItemUnit` enum |
+| `status` | `'pending'` (admin promotes / rejects from the items queue) |
+| `notes` | `"From meal plan: 2026-06-01 (200 g)"` — keeps the original qty+unit since we drop them from the structured columns |
+| `added_by` | admin who finalized |
+
+**Existing items in the household are NOT considered.** If "Olive oil" is already pending from a low-stock flag and the plan needs it too, finalize adds a second row. Admin merges manually from the items queue. This avoids a unique constraint / merge layer we don't need yet.
+
+Ingredients with an empty/missing `name` or a `category` that isn't in the `item_category` enum are **skipped with a warning log** (`housewise.meal_plan` logger). The rest of the finalize call still succeeds.
+
+---
+
 ## Why 502 (not 200-with-reason)
 
 Same split as the cookbook AI endpoints. Meal-plan generate **writes a row**, so a total agent failure means no plan exists for the client to look up afterwards. Returning 200 there would force every caller to inspect the body to know whether persistence happened. 502 makes "we tried but couldn't" structurally distinct from "here's a saved plan."
@@ -126,6 +160,7 @@ Scan-image (`POST /items/scan-image`) is pass-through and uses 200-always with t
 | Read plan (`GET /meal-plan/{week}`) | ✓ | ✓ |
 | Generate plan (`POST /generate`) | ✓ | ✗ |
 | Edit a day (`PATCH /{plan_id}/days/{day_id}`) | ✓ | ✗ |
+| Finalize plan (`POST /{plan_id}/finalize`) | ✓ | ✗ |
 
 Cross-household access is always **404** so existence isn't leaked.
 
@@ -142,17 +177,20 @@ Cross-household access is always **404** so existence isn't leaked.
 | 403 on POST `/generate` / PATCH day | Not admin / not in household | [meal_plan/router.py](../backend/app/meal_plan/router.py) |
 | 404 on GET `/meal-plan/{week}` | No plan exists yet for that week | [meal_plan/router.py](../backend/app/meal_plan/router.py) `get_plan` |
 | 404 on PATCH day | Day not found, plan_id mismatch, or cross-household | [meal_plan/router.py](../backend/app/meal_plan/router.py) `update_day` |
+| 404 on POST `/finalize` | Plan not in caller's household | [meal_plan/router.py](../backend/app/meal_plan/router.py) `finalize` |
+| Items missing after finalize | Ingredient had empty name or bad `category` — skipped with a warning log (search `housewise.meal_plan` for "skipping ingredient") | [meal_plan/router.py](../backend/app/meal_plan/router.py) `finalize` |
+| Duplicate items after re-generate + re-finalize | Items from the first finalize aren't cleaned up when `/generate` resets status to draft. Admin reviews the items queue and merges manually. | [meal_plan/router.py](../backend/app/meal_plan/router.py) `finalize` |
 | 502 on `/generate` | Agent returned `reason` with empty `days`, or `len(days) != 7` | [meal_plan/router.py](../backend/app/meal_plan/router.py) `generate` |
 | 500 on import at startup | `ImportError` from `meal_plan_agent` — agent folder missing or has dep failure | [main.py](../backend/app/main.py) sys.path loop; the import is module-level so failures crash boot rather than hide |
 
 ---
 
-## What this PR does NOT include (deferred)
+## Still deferred
 
-- **`POST /meal-plan/{id}/finalize`** — flips status to `'finalized'`, deduplicates ingredients across the week, inserts shopping items into `public.items`, fires a background price search task.
 - **`GET /meal-plan/{week}/prices`** — frontend polls this after finalize. Needs `meal_plans.price_results` JSONB column (not added yet).
+- **Background price search task** triggered by finalize. Same blocker as above.
 - **`recipe_history`** table + per-day reactions (`/meal-plan/{id}/react`). No reactions UI yet.
-- **Generate as family.** Admin-only this PR; the family screen only shows submit + read, not the generate button.
+- **Generate as family.** Admin-only; the family screen only shows submit + read, not the generate button.
 - **Submission prefill from last week** ("same busy days as last week" suggestion).
-
-All of the above are scoped for follow-up PRs when their UIs land.
+- **Items dedup against the existing household items.** Finalize appends; admin merges from the items queue.
+- **"Un-finalize" endpoint.** Admin can re-run `/generate` to reset to draft if they need to start over.

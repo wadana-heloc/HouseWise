@@ -84,6 +84,7 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | GET    | `/meal-plan/{week_start}` | bearer | Plan + 7 days sorted by day_of_week. 404 if no plan yet. |
 | POST   | `/meal-plan/generate` | bearer:admin | Generate / re-generate the week's plan via the meal-plan agent. 502 on total agent failure. |
 | PATCH  | `/meal-plan/{plan_id}/days/{day_id}` | bearer:admin | Edit one day's `meal_name`, `prep_label`, `notes`, or `recipe_id`. |
+| POST   | `/meal-plan/{plan_id}/finalize` | bearer:admin | Flip `status` to `'finalized'` and auto-add the week's deduplicated ingredients to `/items` (as `status='pending'`, `unit='units'`, qty parsed best-effort with original qty+unit in `notes`). Idempotent. |
 | GET    | `/health` | public | Liveness. |
 
 Items flow + state machine + permission matrix: [docs/items-flow.md](../docs/items-flow.md).

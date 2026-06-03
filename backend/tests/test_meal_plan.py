@@ -447,3 +447,188 @@ def test_patch_day_cross_household_404(client, created_users, patch_meal_plan_ag
         json={"meal_name": "Foreign"},
     )
     assert r.status_code == 404
+
+
+# ---------- Finalize ----------
+
+
+def _items_in_household(sb, household_id):
+    return (
+        sb.table("items")
+        .select("*")
+        .eq("household_id", household_id)
+        .execute()
+        .data
+    ) or []
+
+
+def test_admin_finalize_flips_status_and_inserts_items(
+    client, sb, created_users, patch_meal_plan_agent
+):
+    admin = _signup_admin(client, created_users)
+    gen = client.post(
+        "/meal-plan/generate",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"week_start": WEEK},
+    ).json()
+
+    r = client.post(
+        f"/meal-plan/{gen['id']}/finalize",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "finalized"
+
+    items = _items_in_household(sb, admin["household_id"])
+    # Default _good_days yields "Eggs" on days 2-7 → 1 row after dedup.
+    eggs = [i for i in items if i["name"] == "Eggs"]
+    assert len(eggs) == 1, items
+    e = eggs[0]
+    assert e["status"] == "pending"
+    assert e["added_by"] == admin["user_id"]
+    assert e["category"] == "dairy"
+    assert WEEK in (e["notes"] or "")
+
+
+def test_finalize_dedups_within_batch(client, sb, created_users, patch_meal_plan_agent):
+    admin = _signup_admin(client, created_users)
+    # Same name, different casings on different days → one row.
+    days = _good_days()
+    days[1]["suggested_ingredients"] = [
+        {"name": "EGGS", "quantity": "2", "unit": "units", "category": "dairy"}
+    ]
+    days[2]["suggested_ingredients"] = [
+        {"name": "eggs", "quantity": "3", "unit": "units", "category": "dairy"}
+    ]
+    days[3]["suggested_ingredients"] = [
+        {"name": "Eggs", "quantity": "4", "unit": "units", "category": "dairy"}
+    ]
+    patch_meal_plan_agent.set(days=days)
+    gen = client.post(
+        "/meal-plan/generate",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"week_start": WEEK},
+    ).json()
+
+    client.post(
+        f"/meal-plan/{gen['id']}/finalize",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    items = _items_in_household(sb, admin["household_id"])
+    egg_rows = [i for i in items if i["name"].lower() == "eggs"]
+    assert len(egg_rows) == 1
+
+
+def test_finalize_idempotent_no_second_items_insert(
+    client, sb, created_users, patch_meal_plan_agent
+):
+    admin = _signup_admin(client, created_users)
+    gen = client.post(
+        "/meal-plan/generate",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"week_start": WEEK},
+    ).json()
+    client.post(
+        f"/meal-plan/{gen['id']}/finalize",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    count_before = len(_items_in_household(sb, admin["household_id"]))
+
+    r = client.post(
+        f"/meal-plan/{gen['id']}/finalize",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "finalized"
+    assert len(_items_in_household(sb, admin["household_id"])) == count_before
+
+
+def test_finalize_uses_recipe_ingredients_when_recipe_id_set(
+    client, sb, created_users, patch_meal_plan_agent
+):
+    admin = _signup_admin(client, created_users)
+    # Admin manual save → status='approved' so it's an eligible recipe.
+    recipe = client.post(
+        "/cookbook/recipes",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={
+            "name": "Tikka",
+            "description": None,
+            "ingredients": [
+                {"name": "Chicken", "quantity": "500", "unit": "g", "category": "meat"},
+            ],
+            "instructions": None,
+            "tags": [],
+            "prep_minutes": None,
+            "servings": None,
+        },
+    ).json()
+
+    days = _good_days(recipe_id=recipe["id"])
+    # Wipe all suggested_ingredients so the only source is the recipe join.
+    for d in days:
+        d["suggested_ingredients"] = []
+    patch_meal_plan_agent.set(days=days)
+    gen = client.post(
+        "/meal-plan/generate",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"week_start": WEEK},
+    ).json()
+
+    client.post(
+        f"/meal-plan/{gen['id']}/finalize",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    items = _items_in_household(sb, admin["household_id"])
+    names = {i["name"] for i in items}
+    assert "Chicken" in names
+
+
+def test_finalize_falls_back_to_suggested_for_null_recipe_days(
+    client, sb, created_users, patch_meal_plan_agent
+):
+    admin = _signup_admin(client, created_users)
+    days = _good_days()  # all days null recipe_id; days 2-7 have Eggs suggested
+    patch_meal_plan_agent.set(days=days)
+    gen = client.post(
+        "/meal-plan/generate",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"week_start": WEEK},
+    ).json()
+    client.post(
+        f"/meal-plan/{gen['id']}/finalize",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    items = _items_in_household(sb, admin["household_id"])
+    assert any(i["name"] == "Eggs" for i in items)
+
+
+def test_family_cannot_finalize(client, created_users, patch_meal_plan_agent):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    tok = _member_token(client, member)
+    gen = client.post(
+        "/meal-plan/generate",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"week_start": WEEK},
+    ).json()
+    r = client.post(
+        f"/meal-plan/{gen['id']}/finalize",
+        headers={"Authorization": f"Bearer {tok}"},
+    )
+    assert r.status_code == 403
+
+
+def test_finalize_cross_household_404(client, created_users, patch_meal_plan_agent):
+    a1 = _signup_admin(client, created_users, household_name="H1")
+    a2 = _signup_admin(client, created_users, household_name="H2")
+    gen = client.post(
+        "/meal-plan/generate",
+        headers={"Authorization": f"Bearer {a1['access_token']}"},
+        json={"week_start": WEEK},
+    ).json()
+    r = client.post(
+        f"/meal-plan/{gen['id']}/finalize",
+        headers={"Authorization": f"Bearer {a2['access_token']}"},
+    )
+    assert r.status_code == 404

@@ -1,9 +1,19 @@
+import logging
 from datetime import date, timedelta
-from typing import Any
+from decimal import Decimal, InvalidOperation
+from typing import Any, get_args
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from starlette.concurrency import run_in_threadpool
+
+from ..items.schemas import ItemCategory
+
+log = logging.getLogger("housewise.meal_plan")
+
+# `item_category` enum values — used to skip bad ingredient categories at
+# finalize time rather than 500ing the whole call.
+_ITEM_CATEGORIES: set[str] = set(get_args(ItemCategory))
 
 # Resolves via the sys.path shim in backend/app/main.py. Module-level so the
 # server fails fast if the AI team breaks the function signature.
@@ -30,6 +40,23 @@ def _caller_household(sb, user_id: str) -> tuple[str, str]:
     if not row.data or not row.data.get("household_id"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Caller is not in a household")
     return row.data["household_id"], row.data.get("role") or ""
+
+
+def _parse_qty(raw: Any) -> Decimal:
+    """Best-effort parse of a recipe-style quantity string into Decimal.
+
+    Recipe quantities are free-text ('200', '1.5', 'a pinch'). Items require
+    a positive numeric quantity. On any parse failure or non-positive value,
+    fall back to Decimal(1) — the original raw value is preserved in
+    `items.notes` so admin can still see what the recipe asked for.
+    """
+    if raw is None or raw == "":
+        return Decimal(1)
+    try:
+        v = Decimal(str(raw).strip())
+        return v if v > 0 else Decimal(1)
+    except (InvalidOperation, ValueError):
+        return Decimal(1)
 
 
 def _fetch_plan_with_days(sb, household_id: str, week_start: date) -> dict | None:
@@ -439,4 +466,100 @@ def update_day(
         sb.table("meal_plan_days").update(patch).eq("id", day_id_s).execute()
 
     week_start = date.fromisoformat(plan["week_start"])
+    return _fetch_plan_with_days(sb, household_id, week_start)
+
+
+# ---------- Finalize (admin) ----------
+
+
+@router.post(
+    "/{plan_id}/finalize",
+    response_model=MealPlanOut,
+    summary="Admin finalizes a plan; ingredients are deduped and added to /items",
+)
+def finalize(plan_id: UUID, admin: CurrentUser = Depends(require_role("admin"))):
+    """Flip `status` from `'draft'` to `'finalized'` and auto-populate the
+    household shopping list with every ingredient the week needs.
+
+    Idempotent: calling on an already-finalized plan returns 200 with the
+    plan unchanged and does NOT re-insert items (so admin can hit the button
+    twice without ballooning the shopping list).
+
+    Ingredients are sourced per day:
+    - days with `recipe_id` set → `recipes.ingredients`
+    - days with `recipe_id IS NULL` → `meal_plan_days.suggested_ingredients`
+
+    Within-batch dedup is by `lower(name).strip()`. Existing rows in `items`
+    are NOT considered — duplicates against the family's current list are
+    left for admin to merge from the items queue.
+
+    Errors: 401 missing/invalid bearer. 403 caller is not admin / not in a
+    household. 404 plan not in caller's household. 422 `plan_id` not a UUID.
+    """
+    sb = get_supabase()
+    household_id, _ = _caller_household(sb, admin.id)
+    plan_id_s = str(plan_id)
+
+    plan_res = (
+        sb.table("meal_plans")
+        .select("id, household_id, week_start, status")
+        .eq("id", plan_id_s)
+        .execute()
+    )
+    if not plan_res.data or plan_res.data[0]["household_id"] != household_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Plan not found")
+    plan_row = plan_res.data[0]
+    week_start = date.fromisoformat(plan_row["week_start"])
+
+    if plan_row["status"] == "finalized":
+        return _fetch_plan_with_days(sb, household_id, week_start)
+
+    # Collect ingredients from each day. The select joins each meal_plan_days
+    # row to its (optional) recipe so we get its ingredients in one trip.
+    days_res = (
+        sb.table("meal_plan_days")
+        .select("recipe_id, suggested_ingredients, recipes(ingredients)")
+        .eq("plan_id", plan_id_s)
+        .execute()
+    )
+    seen: dict[str, dict[str, Any]] = {}
+    for d in days_res.data or []:
+        if d.get("recipe_id") and d.get("recipes"):
+            ings = d["recipes"].get("ingredients") or []
+        else:
+            ings = d.get("suggested_ingredients") or []
+        for ing in ings:
+            name = (ing.get("name") or "").strip()
+            category = ing.get("category")
+            if not name or category not in _ITEM_CATEGORIES:
+                log.warning(
+                    "skipping ingredient with bad name/category: %r in plan %s",
+                    ing, plan_id_s,
+                )
+                continue
+            key = name.lower()
+            if key not in seen:
+                seen[key] = ing
+
+    if seen:
+        items_payload = [
+            {
+                "household_id": household_id,
+                "name": ing["name"],
+                "category": ing["category"],
+                "quantity": str(_parse_qty(ing.get("quantity"))),
+                "unit": "units",
+                "status": "pending",
+                "notes": (
+                    f"From meal plan: {week_start.isoformat()} "
+                    f"({ing.get('quantity') or '?'} {ing.get('unit') or ''})".strip()
+                ),
+                "added_by": admin.id,
+            }
+            for ing in seen.values()
+        ]
+        sb.table("items").insert(items_payload).execute()
+
+    sb.table("meal_plans").update({"status": "finalized"}).eq("id", plan_id_s).execute()
+
     return _fetch_plan_with_days(sb, household_id, week_start)
