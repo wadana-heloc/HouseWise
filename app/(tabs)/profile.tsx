@@ -44,7 +44,7 @@ export default function ProfileScreen() {
     {
       title: 'Account',
       items: [
-        { icon: 'mail-outline',          label: 'Report email',    route: '/report-email' },
+        { icon: 'mail-outline',          label: 'Report settings', route: '/report-email' },
         {
           icon: 'notifications-outline',
           label: 'Notifications',
