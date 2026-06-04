@@ -16,6 +16,7 @@ from fastapi import FastAPI
 
 from .auth.router import router as auth_router
 from .cookbook.router import router as cookbook_router
+from .household.router import report_router as household_report_router
 from .household.router import router as household_router
 from .items.router import router as items_router
 from .logging_setup import configure_logging
@@ -60,6 +61,7 @@ app = FastAPI(
 app.include_router(auth_router)
 app.include_router(cookbook_router)
 app.include_router(household_router)
+app.include_router(household_report_router)
 app.include_router(items_router)
 app.include_router(low_stock_router)
 app.include_router(me_router)

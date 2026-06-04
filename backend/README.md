@@ -53,6 +53,8 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | POST   | `/household/members/{id}/password` | bearer:admin | Admin resets a member's password directly. Does not invalidate the member's existing sessions. |
 | PATCH  | `/household/members/{id}` | bearer:admin | Admin updates a member's `display_name` and/or `email`. Email change is instant (no confirmation email). 400 on self-target (use `/me/profile`). |
 | DELETE | `/household/members/{id}` | bearer:admin | Remove a family member. |
+| GET    | `/household/report-settings` | bearer:admin | Read the household's weekly shopping-report schedule (`report_day` ISO 1..7, `report_time` "HH:MM" 24h, `report_timezone` IANA). All fields always present (defaults seeded at DB level). |
+| PATCH  | `/household/report-settings` | bearer:admin | Update any subset of the three fields. Unspecified fields unchanged. 422 on empty body, bad day, malformed time, or unknown IANA timezone. |
 | GET    | `/me` | bearer | Current user (incl. `health_preferences` and `dietary_preferences`) + household snapshot. |
 | PATCH  | `/me/profile` | bearer | Self-update `display_name` and/or `email`. Email change is instant (no confirmation email). |
 | PATCH  | `/me/health-preferences` | bearer | Partial update of the per-user diet toggles (high_protein, low_calories, low_carbs, low_sugar, whole_grain). Unknown keys → 422. |
@@ -122,6 +124,7 @@ Run migrations in order in the Supabase SQL Editor:
 10. [supabase/migrations/0010_dietary_prefs_and_week_notes.sql](../supabase/migrations/0010_dietary_prefs_and_week_notes.sql) — adds `public.users.dietary_preferences jsonb` (default `{dietary_types:[], allergies:[], dislikes:[]}`) and `public.meal_plan_submissions.week_notes text` (nullable, ≤ 2000 chars).
 11. [supabase/migrations/0011_meal_plan_day_reactions.sql](../supabase/migrations/0011_meal_plan_day_reactions.sql) — `public.meal_plan_day_reactions` + `meal_plan_reaction` enum (`liked`/`disliked`) + same-household SELECT RLS + `updated_at` trigger. Keyed on `(day_id, user_id)`; cascades with `meal_plan_days`.
 12. [supabase/migrations/0012_recipe_personalized_descriptions.sql](../supabase/migrations/0012_recipe_personalized_descriptions.sql) — `public.recipe_personalized_descriptions` cache table + per-user SELECT RLS (`user_id = auth.uid()`). Staleness checked in the app layer against `recipes.updated_at`.
+13. [supabase/migrations/0013_household_report_settings.sql](../supabase/migrations/0013_household_report_settings.sql) — adds `report_day smallint NOT NULL DEFAULT 7` (ISO weekday), `report_time text NOT NULL DEFAULT '09:00'`, and `report_timezone text NOT NULL DEFAULT 'UTC'` (IANA) to `public.households`. Backfills existing rows.
 
 0001 creates:
 - `public.households`, `public.users` with FKs into `auth.users`
