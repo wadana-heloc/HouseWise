@@ -18,6 +18,9 @@ dependencies = [
     "anthropic>=0.40.0",
     "easyocr>=1.7.0",
     "python-dotenv>=1.0.0",
+    # zoneinfo IANA DB for Windows + slim Linux containers (no OS tzdata).
+    # Required by /household/report-settings timezone validation.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
