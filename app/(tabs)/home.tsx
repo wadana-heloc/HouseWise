@@ -1,9 +1,12 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
     View,
     Text,
     ScrollView,
     TouchableOpacity,
+    Pressable,
+    Animated,
+    Easing,
     StatusBar,
     Alert,
     ActivityIndicator,
@@ -22,6 +25,14 @@ function getGreeting(): string {
     if (h < 12) return 'Good morning';
     if (h < 17) return 'Good afternoon';
     return 'Good evening';
+}
+
+function getNextReportDate(): string {
+    const now = new Date();
+    const daysUntilSunday = now.getDay() === 0 ? 7 : 7 - now.getDay();
+    const next = new Date(now);
+    next.setDate(now.getDate() + daysUntilSunday);
+    return next.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
 function getInitials(name: string): string {
@@ -111,17 +122,14 @@ export default function HomeScreen() {
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
 
                 {/* ── Greeting card ── */}
-                <View className="mx-5 mt-4 bg-white border border-border rounded-2xl p-4 flex-row items-center justify-between">
-                    <View>
-                        <Text className="text-[20px] font-medium text-text-primary">{greeting}, {name} 👋</Text>
-                        <Text className="text-[13px] text-text-muted mt-1">
-                            {loading
-                                ? 'Loading list…'
-                                : `${items.length} items · ${doneCount} done${urgentCount > 0 ? ` · ${urgentCount} urgent` : ''}`
-                            }
-                        </Text>
-                    </View>
-                </View>
+                <GreetingCard
+                    greeting={greeting}
+                    name={name}
+                    items={items}
+                    doneCount={doneCount}
+                    urgentCount={urgentCount}
+                    loading={loading}
+                />
 
                 {/* ── Quick actions ── */}
                 <View className="px-5 mt-5">
@@ -151,12 +159,12 @@ export default function HomeScreen() {
                             sub="Review & approve"
                             onPress={() => router.push('/weekly-approval')}
                         />
-                        <QuickAction
+                        {/* <QuickAction
                             icon="settings-outline"
                             label="Settings"
                             sub="Stores & health prefs"
                             onPress={() => router.push('/settings')}
-                        />
+                        /> */}
                         <QuickAction
                             icon="book-outline"
                             label="Cookbook"
@@ -226,7 +234,9 @@ export default function HomeScreen() {
 
                                 <View className="flex-row items-center gap-2">
                                     {item.urgent && !isDone && (
-                                        <View className="w-2 h-2 rounded-full bg-amber-400" />
+                                        <View className="bg-amber-50 border border-amber-300 rounded-full px-2 py-0.5">
+                                            <Text className="text-[10px] font-semibold text-amber-600">Urgent</Text>
+                                        </View>
                                     )}
                                     <TouchableOpacity
                                         onPress={() => confirmDelete(item.id, item.name, item.added_by)}
@@ -254,13 +264,24 @@ export default function HomeScreen() {
                 {/* ── Weekly report ── */}
                 <View className="px-5 mt-6">
                     <Text className="text-[12px] font-medium text-text-muted tracking-wider uppercase mb-3">Weekly report</Text>
-                    <View className="bg-white border border-border rounded-2xl p-4">
+                    <View className="bg-white border border-border rounded-2xl p-4 gap-3">
+                        <View className="flex-row items-start gap-3">
+                            <View className="w-9 h-9 rounded-xl bg-teal-50 items-center justify-center mt-0.5">
+                                <Ionicons name="sparkles-outline" size={18} color="#1D9E75" />
+                            </View>
+                            <View className="flex-1">
+                                <Text className="text-[14px] font-medium text-text-primary">AI-generated summary</Text>
+                                <Text className="text-[12px] text-text-muted mt-0.5">
+                                    Next delivery: {getNextReportDate()}
+                                </Text>
+                            </View>
+                        </View>
                         <TouchableOpacity
-                            className="bg-teal-600 rounded-xl py-4 flex-row items-center justify-center gap-2 mx-5 mt-4"
+                            className="bg-teal-600 rounded-xl py-3.5 flex-row items-center justify-center gap-2"
                             onPress={() => router.push('/generate-report')}
                         >
-                            <Ionicons name="sparkles-outline" size={20} color="#fff" />
-                            <Text className="text-[16px] font-semibold text-white">Generate Report</Text>
+                            <Ionicons name="sparkles-outline" size={18} color="#fff" />
+                            <Text className="text-[15px] font-semibold text-white">Generate Report</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -339,6 +360,119 @@ export default function HomeScreen() {
     );
 }
 
+function GreetingCard({
+    greeting, name, items, doneCount, urgentCount, loading,
+}: {
+    greeting: string;
+    name: string;
+    items: Item[];
+    doneCount: number;
+    urgentCount: number;
+    loading: boolean;
+}) {
+    const progress = items.length > 0 ? doneCount / items.length : 0;
+
+    const cardAnim     = useRef(new Animated.Value(0)).current;
+    const progressAnim = useRef(new Animated.Value(0)).current;
+    const pulseAnim    = useRef(new Animated.Value(1)).current;
+    const pulseLoop    = useRef<Animated.CompositeAnimation | null>(null);
+
+    useEffect(() => {
+        Animated.spring(cardAnim, {
+            toValue: 1, damping: 18, stiffness: 120, useNativeDriver: true,
+        }).start();
+    }, []);
+
+    useEffect(() => {
+        if (!loading && items.length > 0) {
+            Animated.sequence([
+                Animated.delay(400),
+                Animated.timing(progressAnim, {
+                    toValue: progress,
+                    duration: 900,
+                    easing: Easing.out(Easing.cubic),
+                    useNativeDriver: false,
+                }),
+            ]).start();
+        }
+    }, [loading, progress]);
+
+    useEffect(() => {
+        pulseLoop.current?.stop();
+        if (urgentCount > 0) {
+            pulseLoop.current = Animated.loop(
+                Animated.sequence([
+                    Animated.timing(pulseAnim, { toValue: 1.12, duration: 650, useNativeDriver: true }),
+                    Animated.timing(pulseAnim, { toValue: 1,    duration: 650, useNativeDriver: true }),
+                ]),
+            );
+            pulseLoop.current.start();
+        } else {
+            Animated.timing(pulseAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+        }
+    }, [urgentCount]);
+
+    const cardStyle = {
+        opacity: cardAnim,
+        transform: [{ translateY: cardAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+    };
+
+    const barStyle = {
+        width: progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+    };
+
+    const pulseStyle = {
+        transform: [{ scale: pulseAnim }],
+    };
+
+    return (
+        <Animated.View style={[cardStyle, {
+            marginHorizontal: 20, marginTop: 16, borderRadius: 16,
+            padding: 20, backgroundColor: '#0d9488', overflow: 'hidden',
+        }]}>
+            {/* decorative blobs */}
+            <View style={{ position: 'absolute', top: -28, right: -28, width: 110, height: 110, borderRadius: 55, backgroundColor: 'rgba(255,255,255,0.08)' }} />
+            <View style={{ position: 'absolute', bottom: -20, right: 40,  width: 72,  height: 72,  borderRadius: 36, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+            <View style={{ position: 'absolute', top: 16,   right: 80,    width: 36,  height: 36,  borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.05)' }} />
+
+            <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, fontWeight: '500' }}>{greeting}</Text>
+            <Text style={{ color: '#fff', fontSize: 24, fontWeight: '600', marginTop: 2 }}>{name} 👋</Text>
+
+            {!loading && (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+                    <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4 }}>
+                        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '500' }}>{items.length} items</Text>
+                    </View>
+                    <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4 }}>
+                        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '500' }}>{doneCount} done</Text>
+                    </View>
+                    {urgentCount > 0 && (
+                        <Animated.View style={[pulseStyle, { backgroundColor: '#F59E0B', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4 }]}>
+                            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>⚡ {urgentCount} urgent</Text>
+                        </Animated.View>
+                    )}
+                </View>
+            )}
+
+            {!loading && items.length > 0 && (
+                <View style={{ marginTop: 16 }}>
+                    <View style={{ height: 6, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 999, overflow: 'hidden' }}>
+                        <Animated.View style={[barStyle, { height: 6, backgroundColor: '#fff', borderRadius: 999 }]} />
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+                        <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11 }}>Shopping progress</Text>
+                        <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 11, fontWeight: '500' }}>{Math.round(progress * 100)}% complete</Text>
+                    </View>
+                </View>
+            )}
+
+            {loading && (
+                <View style={{ marginTop: 16, height: 6, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 999 }} />
+            )}
+        </Animated.View>
+    );
+}
+
 function QuickAction({
     icon, label, sub, onPress,
 }: {
@@ -348,17 +482,19 @@ function QuickAction({
     onPress: () => void;
 }) {
     return (
-        <TouchableOpacity
+        <Pressable
             className="bg-white border border-border rounded-xl p-3.5 flex-col gap-2"
-            style={{ width: '47.5%' }}
+            style={({ pressed }) => ({
+                width: '47.5%',
+                transform: [{ scale: pressed ? 0.97 : 1 }],
+            })}
             onPress={onPress}
-            activeOpacity={0.75}
         >
             <View className="w-9 h-9 rounded-xl bg-teal-50 items-center justify-center">
                 <Ionicons name={icon} size={20} color="#1D9E75" />
             </View>
             <Text className="text-[13px] font-medium text-text-primary">{label}</Text>
             <Text className="text-[12px] text-text-faint -mt-1.5">{sub}</Text>
-        </TouchableOpacity>
+        </Pressable>
     );
 }
