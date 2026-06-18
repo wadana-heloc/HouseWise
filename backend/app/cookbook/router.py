@@ -209,25 +209,43 @@ def get_recipe(recipe_id: UUID, user: CurrentUser = Depends(current_user)):
 @router.patch(
     "/recipes/{recipe_id}",
     response_model=RecipeOut,
-    summary="Admin edits a recipe",
+    summary="Admin or creator edits a recipe",
 )
 def update_recipe(
     recipe_id: UUID,
     body: RecipeUpdate,
-    admin: CurrentUser = Depends(require_role("admin")),
+    user: CurrentUser = Depends(current_user),
 ):
-    """Admin patches any non-id field, including `status` if needed.
+    """Patch any non-id field on a recipe. Two callers allowed:
 
-    Errors: 401 missing/invalid bearer. 403 caller is not admin / not in a
-    household. 404 recipe not in caller's household. 422 empty body, bad
-    enum, or `recipe_id` is not a UUID.
+    - **Admin** — full edit including `status`.
+    - **Creator** (`recipe.submitted_by == caller.id`) — any field except
+      `status`. Works at any status (pending or approved). Edits go live
+      without admin re-review.
+
+    Cross-household PATCHes return 404 (not 403) so existence isn't leaked.
+
+    Errors: 401 missing/invalid bearer. 403 caller is not admin and not the
+    creator, or non-admin attempted to change `status`. 404 recipe not in
+    caller's household. 422 empty body, bad enum, or `recipe_id` not a UUID.
     """
     sb = get_supabase()
-    household_id, role = _caller_household(sb, admin.id)
+    household_id, role = _caller_household(sb, user.id)
     recipe_id_str = str(recipe_id)
-    _fetch_recipe_for_caller(sb, recipe_id_str, household_id, admin.id, role)
+    recipe = _fetch_recipe_for_caller(sb, recipe_id_str, household_id, user.id, role)
+
+    if role != "admin" and recipe.get("submitted_by") != user.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only the recipe creator or an admin may edit",
+        )
 
     patch: dict = body.model_dump(exclude_unset=True)
+    if role != "admin" and "status" in patch:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only admins can change a recipe's status",
+        )
     if "ingredients" in patch and patch["ingredients"] is not None:
         patch["ingredients"] = [
             (ing if isinstance(ing, dict) else ing.model_dump())
@@ -235,7 +253,7 @@ def update_recipe(
         ]
 
     sb.table("recipes").update(patch).eq("id", recipe_id_str).execute()
-    return _fetch_recipe_for_caller(sb, recipe_id_str, household_id, admin.id, role)
+    return _fetch_recipe_for_caller(sb, recipe_id_str, household_id, user.id, role)
 
 
 @router.delete(

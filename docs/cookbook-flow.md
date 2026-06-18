@@ -27,7 +27,7 @@ AI agent functions live outside the backend tree under [ai_agents/cookbook-agent
 | GET | `/cookbook/recipes` | any member | — | — | Query params: `tag`, `search` (ilike on name), `source`, `status`. Default scope: approved + own pending. |
 | POST | `/cookbook/recipes` | any member | `RecipeCreate` | **yes** | Single save endpoint for all three paths. `source` from body (defaults to `manual`). Status = admin → `approved`, family → `pending`. |
 | GET | `/cookbook/recipes/{id}` | any member | — | — | 404 cross-household; 404 if pending and not own/admin. |
-| PATCH | `/cookbook/recipes/{id}` | admin | `RecipeUpdate` (≥1 field) | yes | Edit any field including `status`. |
+| PATCH | `/cookbook/recipes/{id}` | admin **or** creator | `RecipeUpdate` (≥1 field) | yes | Admin edits any field including `status`. Creator (`submitted_by == caller.id`) may edit at any status (pending or approved) **except** `status` itself — non-admin sending `status` → 403. |
 | DELETE | `/cookbook/recipes/{id}` | admin | — | yes | Hard delete. |
 | POST | `/cookbook/recipes/{id}/approve` | admin | — | yes | Sets `status='approved'`. Idempotent. |
 | POST | `/cookbook/recipes/generate` | any member | `GenerateRecipeRequest` | **no** | Pass-through preview. Returns `RecipePreview` (no `id`/`status`). FE saves via `POST /cookbook/recipes` with `source='ai_generated'`. 502 on agent total failure. |
@@ -154,7 +154,8 @@ If you add a third AI pass-through endpoint, pick one of these two shapes consci
 | List **all** pending in household | ✓ | ✗ | ✗ |
 | Get single approved | ✓ | ✓ | ✓ |
 | Get single pending (own) | ✓ | ✓ | ✗ |
-| Patch (incl. set status) | ✓ | ✗ | ✗ |
+| Patch own recipe (any field except `status`) | ✓ | ✓ | ✗ |
+| Patch any recipe + change `status` | ✓ | ✗ | ✗ |
 | Delete | ✓ | ✗ | ✗ |
 | Approve | ✓ | ✗ | ✗ |
 | Get personalized description | ✓ (own only) | ✓ (own only) | ✓ (own only) |

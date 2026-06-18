@@ -262,7 +262,8 @@ def test_admin_patches_name(client, created_users):
     assert r.json()["name"] == "Renamed"
 
 
-def test_family_cannot_patch(client, created_users):
+def test_family_cannot_edit_another_members_recipe(client, created_users):
+    """Family member B cannot PATCH a recipe submitted by family A (or admin)."""
     admin = _signup_admin(client, created_users)
     rid = _post(client, admin["access_token"]).json()["id"]
     member = _create_member(client, admin["access_token"], created_users)
@@ -273,6 +274,94 @@ def test_family_cannot_patch(client, created_users):
         json={"name": "Nope"},
     )
     assert r.status_code == 403
+
+
+def test_family_can_edit_own_pending_recipe(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, member)
+
+    rid = _post(client, fam_token).json()["id"]
+    r = client.patch(
+        f"/cookbook/recipes/{rid}",
+        headers={"Authorization": f"Bearer {fam_token}"},
+        json={"name": "Renamed by creator", "story": "Family story."},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Renamed by creator"
+    assert r.json()["story"] == "Family story."
+    assert r.json()["status"] == "pending"
+
+
+def test_family_can_edit_own_approved_recipe(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, member)
+
+    rid = _post(client, fam_token).json()["id"]
+    # Admin approves
+    r = client.post(
+        f"/cookbook/recipes/{rid}/approve",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "approved"
+
+    # Creator can still edit after approval
+    r = client.patch(
+        f"/cookbook/recipes/{rid}",
+        headers={"Authorization": f"Bearer {fam_token}"},
+        json={"name": "Edited after approval"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Edited after approval"
+    assert r.json()["status"] == "approved"
+
+
+def test_family_cannot_change_status_via_patch(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, member)
+
+    rid = _post(client, fam_token).json()["id"]
+    r = client.patch(
+        f"/cookbook/recipes/{rid}",
+        headers={"Authorization": f"Bearer {fam_token}"},
+        json={"status": "approved"},
+    )
+    assert r.status_code == 403, r.text
+    assert "status" in r.json()["detail"].lower()
+
+
+def test_admin_can_still_edit_any_recipe(client, created_users):
+    """Regression check — admin retains full edit access on family submissions."""
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, member)
+
+    rid = _post(client, fam_token).json()["id"]
+    r = client.patch(
+        f"/cookbook/recipes/{rid}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"name": "Admin-edited"},
+    )
+    assert r.status_code == 200
+    assert r.json()["name"] == "Admin-edited"
+
+
+def test_admin_can_still_change_status_via_patch(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, member)
+
+    rid = _post(client, fam_token).json()["id"]
+    r = client.patch(
+        f"/cookbook/recipes/{rid}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"status": "approved"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "approved"
 
 
 def test_admin_deletes_recipe(client, created_users):

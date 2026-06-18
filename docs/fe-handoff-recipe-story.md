@@ -92,6 +92,36 @@ curl -sS -X PATCH $BASE/cookbook/recipes/$RID \
 
 ---
 
+## Related change shipping at the same time — family members can edit their own recipes
+
+`PATCH /cookbook/recipes/{id}` was admin-only. As of this release it accepts:
+
+- **Admin** — full edit including `status`.
+- **Creator** (`recipe.submitted_by == caller.id`) — any field **except** `status`. Works at any status (pending or approved). Edits go live immediately, no admin re-review.
+
+Non-admin sending `{"status": "approved"}` → 403 `{"detail":"Only admins can change a recipe's status"}`. Non-creator non-admin trying to PATCH someone else's recipe → 403.
+
+**FE impact:** if your recipe-detail screen hides the "Edit" button on recipes the user didn't submit, that's correct for non-creators. But on the user's own pending/approved submissions, the button should now be visible regardless of role.
+
+Quick test:
+```bash
+# Family member edits their own pending recipe → 200
+curl -sS -X PATCH $BASE/cookbook/recipes/$MY_RECIPE_ID \
+  -H "Authorization: Bearer $FAMILY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Renamed by me"}'
+
+# Family member tries to flip status → 403
+curl -sS -X PATCH $BASE/cookbook/recipes/$MY_RECIPE_ID \
+  -H "Authorization: Bearer $FAMILY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "approved"}'
+```
+
+DELETE remains admin-only.
+
+---
+
 ## Rollback
 
 If anything breaks, the column is additive and non-required — there's nothing to roll back on the FE. Backend can ignore the field temporarily by dropping it from `RecipeCreate` / `RecipeUpdate`; existing data stays put.

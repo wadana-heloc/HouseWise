@@ -69,7 +69,7 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | GET    | `/cookbook/recipes` | bearer | List recipes. Default scope: approved + caller's own pending. Filters: `tag`, `search`, `source`, `status`. |
 | POST   | `/cookbook/recipes` | bearer | Save a recipe (all three paths). Body `source` defaults to `manual`; FE sets `ai_generated` / `photo` after a preview. Status = admin → `approved`, family → `pending`. |
 | GET    | `/cookbook/recipes/{id}` | bearer | Fetch one. 404 if pending and not own/admin, or cross-household. |
-| PATCH  | `/cookbook/recipes/{id}` | bearer:admin | Edit any field including `status`. |
+| PATCH  | `/cookbook/recipes/{id}` | bearer (admin or creator) | Edit any field. Admin can also change `status`; non-admin trying to change `status` → 403. Creator can edit at any status (pending or approved). |
 | DELETE | `/cookbook/recipes/{id}` | bearer:admin | Hard delete. |
 | POST   | `/cookbook/recipes/{id}/approve` | bearer:admin | Flip a pending recipe to approved. Idempotent. |
 | POST   | `/cookbook/recipes/generate` | bearer | **Pass-through preview** — calls the cookbook agent and returns a `RecipePreview` (no DB write). FE saves via `POST /cookbook/recipes` with `source='ai_generated'`. 502 on agent total failure. |
