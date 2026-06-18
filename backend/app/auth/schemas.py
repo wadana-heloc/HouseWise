@@ -19,7 +19,14 @@ class SignupRequest(BaseModel):
 class LoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    email: EmailStr
+    # Plain str (not EmailStr) on purpose: EmailStr 422s on RFC-6761 reserved
+    # TLDs (`.test`, `.example`, `.invalid`, `.localhost`) and a few other
+    # shapes before login runs, which leaked an enumeration signal (BUG-008
+    # second half). Letting any string of reasonable length through means
+    # Supabase becomes the single arbiter — bad credentials always return
+    # 401, no path-dependent 422. Other endpoints keep EmailStr because they
+    # create accounts and need real syntactic validation.
+    email: str = Field(max_length=254)
     password: str
 
 

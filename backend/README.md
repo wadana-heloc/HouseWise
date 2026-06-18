@@ -62,9 +62,9 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | POST   | `/items` | bearer | Add an item to the caller's household. Server sets `status='pending'`, `added_by=caller`. |
 | GET    | `/items` | bearer | List items in the caller's household. Filters: `status`, `urgent`, `category`, `added_by`. |
 | GET    | `/items/{id}` | bearer | Fetch one item (404 cross-household). |
-| PATCH  | `/items/{id}` | bearer | Update any non-status field. Empty body → 422. |
+| PATCH  | `/items/{id}` | bearer (creator or admin) | Update any non-status field on a **pending** item. Non-creator non-admin → 403. Non-pending status → 409 for everyone (FR-017; admin must move status back to pending first). Empty body → 422. |
 | POST   | `/items/{id}/status` | bearer | Transition `status`. Family may set `done` or undo `done→pending`; admin only for `in_review`/`approved`/`rejected` and reopening `rejected→pending`. |
-| DELETE | `/items/{id}` | bearer | Delete. Creator or any admin in the household. |
+| DELETE | `/items/{id}` | bearer (creator or admin) | Delete a **pending** item. Non-creator non-admin → 403. Non-pending status → 409 for everyone (FR-018). |
 | POST   | `/items/scan-image` | bearer | Run a product photo through the image-analysis agent. Pass-through — does not persist. Always 200; failures live in `reason`. |
 | GET    | `/cookbook/recipes` | bearer | List recipes. Default scope: approved + caller's own pending. Filters: `tag`, `search`, `source`, `status`. |
 | POST   | `/cookbook/recipes` | bearer | Save a recipe (all three paths). Body `source` defaults to `manual`; FE sets `ai_generated` / `photo` after a preview. Status = admin → `approved`, family → `pending`. |
@@ -109,6 +109,7 @@ Meal plan (submissions + AI generate + day-edit; 502 on agent failure): [docs/me
 - **Password policy** (enforced on signup, member create, member-password reset, and self password-update — **not** on `/auth/login`): ≥8 chars, must contain at least one lowercase letter, one uppercase letter, one digit, and one special character (`string.punctuation`). Violations → 422 with a message listing what's missing. Single source of truth: [app/auth/password_policy.py](app/auth/password_policy.py).
 - **JSON nesting depth**: every `application/json` request body is pre-scanned by [`json_depth_limit`](app/main.py) middleware and rejected with 422 if nesting exceeds **32 levels** (anti-recursion-bomb). The scan is iterative, so it can't trip the same `RecursionError` it's protecting against. Adjust `MAX_JSON_DEPTH` in [app/main.py](app/main.py) if a legitimate endpoint ever needs more.
 - **Strict request bodies**: every top-level write schema (Item/LowStock/Store/Recipe/Member/Submission/…) has `model_config = ConfigDict(extra="forbid")`. Unknown keys return `422 {"type":"extra_forbidden", "loc":["body","<key>"], …}` naming the offending field instead of silently dropping it. Nested input models (e.g. `MealRequest`, `RecipeIngredient`) still permit extras — tighten on a per-bug basis.
+- **Name trimming**: `items.name` and `low_stock.name` on create/update use `StringConstraints(strip_whitespace=True, min_length=1)`. Leading/trailing whitespace is stripped before storage; whitespace-only names → 422 (FR-012). Item duplicates are intentionally allowed at the backend per FR-024 — dedup is an FE-side soft warning, not a 409. `low_stock` keeps its DB `unique (household_id, lower(name))` constraint.
 - **Login error parity**: every bad-credentials path on `/auth/login` returns the constant body `{"detail":"Invalid credentials"}` — no path-dependent reason text. The reason is logged server-side under `housewise.auth`. Keeps enumeration surface flat.
 
 ## Database

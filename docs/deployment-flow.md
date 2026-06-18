@@ -139,3 +139,39 @@ curl -s "$URL/health"            # -> {"ok": true}
 5. `POST /items/scan-image` with a sample photo → 200 (torch + `ai_agents/` layout OK
    inside the container).
 6. Push a trivial commit → trigger builds and rolls a new revision automatically.
+
+## Troubleshooting (walls hit on the first deploy)
+
+- **Build fails at the `push` step, no build logs in Cloud Logging.** The trigger's
+  build service account was set to `housewise-run` (the *runtime* SA, which only has
+  `secretmanager.secretAccessor`). It can't push to Artifact Registry, deploy, or even
+  write build logs. Fix: set the trigger's **Service account** to
+  `housewise-build@...` (the one granted `run.admin` + `artifactregistry.writer` +
+  `logging.logWriter`). The two SAs are distinct on purpose — build vs. runtime.
+
+- **Deploy "succeeds" but the URL returns Google's `403 Forbidden` (HTML, not JSON).**
+  That's the *platform* IAM layer, not the app. The service has no `allUsers` invoker.
+  If it was deployed with `--allow-unauthenticated` yet the binding didn't take, the org
+  policy `constraints/iam.allowedPolicyMemberDomains` is blocking public principals
+  (deploy logs a warning but doesn't fail). Fix: an Org Policy Admin sets a
+  project-level override allowing it (we used `allValues: ALLOW` on `heloc-prod`):
+
+  ```bash
+  cat > /tmp/allowdomains.yaml <<'EOF'
+  constraint: constraints/iam.allowedPolicyMemberDomains
+  listPolicy:
+    allValues: ALLOW
+  EOF
+  gcloud resource-manager org-policies set-policy /tmp/allowdomains.yaml --project=heloc-prod
+  ```
+
+  Then re-run the trigger so the deploy re-applies the `allUsers` binding. The override
+  persists after the Org Policy Admin role is revoked — you only need the role to set it.
+  Note: `gcloud resource-manager org-policies allow ... allUsers` does **not** work —
+  the constraint rejects `allUsers` as a list value; you must use the override above.
+
+- **`PERMISSION_DENIED: ...setIamPolicy` on a secret / service / project.** A plain
+  `roles/editor` account can *create* resources but can't set IAM policy. The IAM
+  bindings (secret accessor, the build-SA project roles, `allUsers` invoker) need an
+  elevated account (Owner, or the matching `*.admin` roles). Hand those specific
+  binding commands to an Owner, or get elevated first.

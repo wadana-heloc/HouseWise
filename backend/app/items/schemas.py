@@ -1,8 +1,15 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+
+# Trimmed item name: stored without leading/trailing whitespace; empty after
+# trim is rejected (FR-012). Duplicate-name policy is NOT enforced here — FR-024
+# says duplicates are allowed with a FE-side soft warning.
+ItemName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)
+]
 
 ItemCategory = Literal[
     "dairy", "meat", "grains", "bakery", "pantry",
@@ -40,7 +47,7 @@ class ProductScanResponse(BaseModel):
 class ItemCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=120)
+    name: ItemName
     category: ItemCategory
     quantity: Decimal = Field(default=Decimal(1), gt=0, max_digits=10, decimal_places=3)
     unit: ItemUnit
@@ -51,7 +58,7 @@ class ItemCreate(BaseModel):
 class ItemUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    name: Optional[ItemName] = None
     category: Optional[ItemCategory] = None
     quantity: Optional[Decimal] = Field(default=None, gt=0, max_digits=10, decimal_places=3)
     unit: Optional[ItemUnit] = None

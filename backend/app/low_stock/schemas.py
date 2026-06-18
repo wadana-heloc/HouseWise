@@ -1,13 +1,17 @@
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, StringConstraints
 
 
 class LowStockFlagCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=120)
+    # Trimmed; empty-after-trim rejected (FR-012). Case-insensitive uniqueness
+    # per household is enforced by the DB unique (household_id, lower(name)).
+    name: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)
+    ]
 
 
 class LowStockFlagOut(BaseModel):

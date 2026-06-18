@@ -349,3 +349,205 @@ def test_delete_cross_household_returns_404(client, created_users):
         headers={"Authorization": f"Bearer {admin2['access_token']}"},
     )
     assert r.status_code == 404
+
+
+# ---------- BUG-011: PATCH owner-or-admin gate (FR-017) ----------
+
+
+def test_patch_owner_can_edit_own_pending(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, admin, member)
+
+    item = _create_item(client, fam_token)
+    r = client.patch(
+        f"/items/{item['id']}",
+        headers={"Authorization": f"Bearer {fam_token}"},
+        json={"name": "Edited by owner"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Edited by owner"
+
+
+def test_patch_admin_can_edit_family_pending(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, admin, member)
+
+    item = _create_item(client, fam_token)
+    r = client.patch(
+        f"/items/{item['id']}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"name": "Admin-edited"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Admin-edited"
+
+
+def test_patch_non_owner_non_admin_returns_403(client, created_users):
+    """Family B trying to PATCH family A's item must be 403 (FR-017)."""
+    admin = _signup_admin(client, created_users)
+    m1 = _create_member(client, admin["access_token"], created_users)
+    m2 = _create_member(client, admin["access_token"], created_users)
+    tok1 = _member_token(client, admin, m1)
+    tok2 = _member_token(client, admin, m2)
+
+    item = _create_item(client, tok1)
+    r = client.patch(
+        f"/items/{item['id']}",
+        headers={"Authorization": f"Bearer {tok2}"},
+        json={"name": "Stealing"},
+    )
+    assert r.status_code == 403, r.text
+    assert "creator" in r.json()["detail"].lower() or "admin" in r.json()["detail"].lower()
+
+
+# ---------- BUG-012: PATCH/DELETE blocked on non-pending status (FR-017/FR-018) ----------
+
+
+def _set_status(client, token, item_id: str, new_status: str) -> dict:
+    r = client.post(
+        f"/items/{item_id}/status",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"status": new_status},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_patch_blocked_when_in_review(client, created_users):
+    admin = _signup_admin(client, created_users)
+    item = _create_item(client, admin["access_token"])
+    _set_status(client, admin["access_token"], item["id"], "in_review")
+
+    r = client.patch(
+        f"/items/{item['id']}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"name": "Nope"},
+    )
+    assert r.status_code == 409, r.text
+    assert "in_review" in r.json()["detail"]
+
+
+def test_patch_blocked_when_approved_even_for_admin(client, created_users):
+    """No admin carve-out — FR-017 says 'blocked' full stop."""
+    admin = _signup_admin(client, created_users)
+    item = _create_item(client, admin["access_token"])
+    _set_status(client, admin["access_token"], item["id"], "approved")
+
+    r = client.patch(
+        f"/items/{item['id']}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"name": "Nope"},
+    )
+    assert r.status_code == 409, r.text
+    assert "approved" in r.json()["detail"]
+
+
+def test_patch_blocked_when_done(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, admin, member)
+
+    item = _create_item(client, fam_token)
+    _set_status(client, fam_token, item["id"], "done")
+
+    r = client.patch(
+        f"/items/{item['id']}",
+        headers={"Authorization": f"Bearer {fam_token}"},
+        json={"name": "Nope"},
+    )
+    assert r.status_code == 409, r.text
+    assert "done" in r.json()["detail"]
+
+
+def test_delete_blocked_when_approved_even_for_admin(client, created_users):
+    admin = _signup_admin(client, created_users)
+    item = _create_item(client, admin["access_token"])
+    _set_status(client, admin["access_token"], item["id"], "approved")
+
+    r = client.delete(
+        f"/items/{item['id']}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert r.status_code == 409, r.text
+    assert "approved" in r.json()["detail"]
+
+
+def test_delete_blocked_when_done(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, admin, member)
+
+    item = _create_item(client, fam_token)
+    _set_status(client, fam_token, item["id"], "done")
+
+    r = client.delete(
+        f"/items/{item['id']}",
+        headers={"Authorization": f"Bearer {fam_token}"},
+    )
+    assert r.status_code == 409, r.text
+    assert "done" in r.json()["detail"]
+
+
+# ---------- BUG-004 + BUG-005: trim names + reject empty after trim (FR-012, FR-024) ----------
+
+
+def test_create_item_whitespace_only_name_rejected(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = client.post(
+        "/items",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json=_item_payload(name="   "),
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_create_item_trims_leading_trailing_whitespace(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = client.post(
+        "/items",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json=_item_payload(name="  Whole milk 2L  "),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["name"] == "Whole milk 2L"
+
+
+def test_patch_item_trims_name(client, created_users):
+    admin = _signup_admin(client, created_users)
+    item = _create_item(client, admin["access_token"])
+    r = client.patch(
+        f"/items/{item['id']}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"name": "  Bread  "},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Bread"
+
+
+def test_patch_item_whitespace_only_name_rejected(client, created_users):
+    admin = _signup_admin(client, created_users)
+    item = _create_item(client, admin["access_token"])
+    r = client.patch(
+        f"/items/{item['id']}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"name": "   "},
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_admin_can_edit_after_reverting_to_pending(client, created_users):
+    """FR-017 escape hatch: admin moves status back to pending then edits."""
+    admin = _signup_admin(client, created_users)
+    item = _create_item(client, admin["access_token"])
+    _set_status(client, admin["access_token"], item["id"], "approved")
+    _set_status(client, admin["access_token"], item["id"], "pending")
+
+    r = client.patch(
+        f"/items/{item['id']}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"name": "Edited after revert"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Edited after revert"
