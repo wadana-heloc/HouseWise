@@ -1,4 +1,4 @@
-# HouseWise Backend
+# HouseWise Backend 
 
 FastAPI + Supabase. Owns auth, households, and family-member membership.
 
