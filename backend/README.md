@@ -22,7 +22,7 @@ uvicorn app.main:app --reload
 
 Dependencies are declared in [pyproject.toml](pyproject.toml). The `[dev]` extra pulls test/lint/typecheck tools — drop it in production deploys (`pip install -e .`).
 
-## Environment variables
+## Environment variables    
 
 See [.env.example](.env.example) for the full list. Required at startup:
 
