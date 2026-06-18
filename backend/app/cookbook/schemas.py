@@ -21,6 +21,7 @@ class RecipeCreate(BaseModel):
 
     name: str = Field(min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=2000)
+    story: Optional[str] = Field(default=None, min_length=1, max_length=5000)
     ingredients: list[RecipeIngredient] = Field(default_factory=list)
     instructions: Optional[str] = Field(default=None, max_length=10_000)
     tags: list[str] = Field(default_factory=list, max_length=20)
@@ -36,6 +37,7 @@ class RecipeUpdate(BaseModel):
 
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=2000)
+    story: Optional[str] = Field(default=None, min_length=1, max_length=5000)
     ingredients: Optional[list[RecipeIngredient]] = None
     instructions: Optional[str] = Field(default=None, max_length=10_000)
     tags: Optional[list[str]] = Field(default=None, max_length=20)
@@ -55,6 +57,7 @@ class RecipeOut(BaseModel):
     household_id: str
     name: str
     description: Optional[str]
+    story: Optional[str]
     ingredients: list[RecipeIngredient]
     instructions: Optional[str]
     tags: list[str]

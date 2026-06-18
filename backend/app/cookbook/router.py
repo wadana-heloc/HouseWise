@@ -175,6 +175,7 @@ def create_recipe(body: RecipeCreate, user: CurrentUser = Depends(current_user))
         "household_id": household_id,
         "name": body.name,
         "description": body.description,
+        "story": body.story,
         "ingredients": [ing.model_dump() for ing in body.ingredients],
         "instructions": body.instructions,
         "tags": body.tags,

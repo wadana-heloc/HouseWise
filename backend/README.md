@@ -128,6 +128,7 @@ Run migrations in order in the Supabase SQL Editor:
 11. [supabase/migrations/0011_meal_plan_day_reactions.sql](../supabase/migrations/0011_meal_plan_day_reactions.sql) — `public.meal_plan_day_reactions` + `meal_plan_reaction` enum (`liked`/`disliked`) + same-household SELECT RLS + `updated_at` trigger. Keyed on `(day_id, user_id)`; cascades with `meal_plan_days`.
 12. [supabase/migrations/0012_recipe_personalized_descriptions.sql](../supabase/migrations/0012_recipe_personalized_descriptions.sql) — `public.recipe_personalized_descriptions` cache table + per-user SELECT RLS (`user_id = auth.uid()`). Staleness checked in the app layer against `recipes.updated_at`.
 13. [supabase/migrations/0013_household_report_settings.sql](../supabase/migrations/0013_household_report_settings.sql) — adds `report_day smallint NOT NULL DEFAULT 7` (ISO weekday), `report_time text NOT NULL DEFAULT '09:00'`, and `report_timezone text NOT NULL DEFAULT 'UTC'` (IANA) to `public.households`. Backfills existing rows.
+14. [supabase/migrations/0014_recipe_story.sql](../supabase/migrations/0014_recipe_story.sql) — adds `story text` to `public.recipes` (nullable, 1..5000 chars when present). Manually authored — AI generate / photo extract endpoints do not populate this field. Existing recipes stay `NULL`.
 
 0001 creates:
 - `public.households`, `public.users` with FKs into `auth.users`

@@ -163,6 +163,16 @@ Cross-household access is always **404** so existence isn't leaked.
 
 ---
 
+## Story (manually authored narrative)
+
+Recipes have an optional `story` field (text, 1..5000 chars when present, nullable) — origin story, family note, or any prose the author wants attached. Set on `POST /cookbook/recipes` or `PATCH /cookbook/recipes/{id}`. **Same for every viewer** — distinct from the per-user personalized description below.
+
+Not populated by `/cookbook/recipes/generate` or `/cookbook/recipes/extract-photo`. AI / photo previews return `story: null`; the user types one manually on the review screen before saving.
+
+PATCH semantics for clearing: omit the key to leave it alone, send `"story": null` to clear, send `"story": "..."` to replace. Empty string `""` is rejected (422 — `min_length=1`). Stored in `recipes.story` (migration 0014).
+
+---
+
 ## Personalized descriptions
 
 `GET /cookbook/recipes/{id}/description` returns a per-user blurb produced by the `personalize_recipe_description` agent at [ai_agents/cookbook-agent/cookbook_agent.py](../ai_agents/cookbook-agent/cookbook_agent.py). The agent function takes the recipe row, the caller's profile (`display_name` + `health_preferences` + `dietary_preferences`), and the caller's last 5 reactions; returns a short string (or `""` on failure).

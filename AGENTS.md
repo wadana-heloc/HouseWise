@@ -95,6 +95,7 @@ supabase/
     0011_meal_plan_day_reactions.sql         # meal_plan_day_reactions table + meal_plan_reaction enum
     0012_recipe_personalized_descriptions.sql # recipe_personalized_descriptions cache (per-user RLS)
     0013_household_report_settings.sql       # households.report_day / report_time / report_timezone (admin-only weekly shopping report schedule)
+    0014_recipe_story.sql                    # recipes.story text (nullable, 1..5000 chars; manually authored narrative)
 
 docs/
   auth-flow.md         # runtime sequences, SDK refresh, failure modes

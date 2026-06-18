@@ -699,3 +699,58 @@ def test_description_cross_household_404(client, sb, created_users, patch_person
         .execute()
     )
     assert (rows.count or 0) == 0
+
+
+# ---------- Recipe story (migration 0014) ----------
+
+
+def test_create_recipe_with_story(client, created_users):
+    admin = _signup_admin(client, created_users)
+    payload = _basic_recipe_payload(story="My grandmother made this every Sunday.")
+    r = _post(client, admin["access_token"], payload)
+    assert r.status_code == 201, r.text
+    assert r.json()["story"] == "My grandmother made this every Sunday."
+
+
+def test_create_recipe_without_story_defaults_null(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = _post(client, admin["access_token"])
+    assert r.status_code == 201, r.text
+    assert r.json()["story"] is None
+
+
+def test_create_recipe_empty_story_rejected(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = _post(client, admin["access_token"], _basic_recipe_payload(story=""))
+    assert r.status_code == 422, r.text
+
+
+def test_create_recipe_oversized_story_rejected(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = _post(client, admin["access_token"], _basic_recipe_payload(story="x" * 5001))
+    assert r.status_code == 422, r.text
+
+
+def test_patch_recipe_set_story(client, created_users):
+    admin = _signup_admin(client, created_users)
+    rid = _post(client, admin["access_token"]).json()["id"]
+    hdr = {"Authorization": f"Bearer {admin['access_token']}"}
+
+    r = client.patch(f"/cookbook/recipes/{rid}", headers=hdr, json={"story": "new story"})
+    assert r.status_code == 200, r.text
+    assert r.json()["story"] == "new story"
+
+    g = client.get(f"/cookbook/recipes/{rid}", headers=hdr)
+    assert g.json()["story"] == "new story"
+
+
+def test_patch_recipe_clear_story(client, created_users):
+    admin = _signup_admin(client, created_users)
+    rid = _post(
+        client, admin["access_token"], _basic_recipe_payload(story="initial"),
+    ).json()["id"]
+    hdr = {"Authorization": f"Bearer {admin['access_token']}"}
+
+    r = client.patch(f"/cookbook/recipes/{rid}", headers=hdr, json={"story": None})
+    assert r.status_code == 200, r.text
+    assert r.json()["story"] is None
