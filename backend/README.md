@@ -107,6 +107,9 @@ Meal plan (submissions + AI generate + day-edit; 502 on agent failure): [docs/me
 
 - **Email**: every endpoint that accepts an email uses Pydantic's `EmailStr` (RFC-5322 syntax). Malformed addresses → 422.
 - **Password policy** (enforced on signup, member create, member-password reset, and self password-update — **not** on `/auth/login`): ≥8 chars, must contain at least one lowercase letter, one uppercase letter, one digit, and one special character (`string.punctuation`). Violations → 422 with a message listing what's missing. Single source of truth: [app/auth/password_policy.py](app/auth/password_policy.py).
+- **JSON nesting depth**: every `application/json` request body is pre-scanned by [`json_depth_limit`](app/main.py) middleware and rejected with 422 if nesting exceeds **32 levels** (anti-recursion-bomb). The scan is iterative, so it can't trip the same `RecursionError` it's protecting against. Adjust `MAX_JSON_DEPTH` in [app/main.py](app/main.py) if a legitimate endpoint ever needs more.
+- **Strict request bodies**: every top-level write schema (Item/LowStock/Store/Recipe/Member/Submission/…) has `model_config = ConfigDict(extra="forbid")`. Unknown keys return `422 {"type":"extra_forbidden", "loc":["body","<key>"], …}` naming the offending field instead of silently dropping it. Nested input models (e.g. `MealRequest`, `RecipeIngredient`) still permit extras — tighten on a per-bug basis.
+- **Login error parity**: every bad-credentials path on `/auth/login` returns the constant body `{"detail":"Invalid credentials"}` — no path-dependent reason text. The reason is logged server-side under `housewise.auth`. Keeps enumeration surface flat.
 
 ## Database
 

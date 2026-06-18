@@ -307,6 +307,8 @@ Server: call `sign_in_with_password` **on a fresh anon client** (never the share
 
 Mobile stores tokens in **SecureStore** (iOS Keychain / Android Keystore), **never** plain AsyncStorage.
 
+**Errors.** Every bad-credentials path — unknown email, wrong password, validation rejection from Supabase — returns `401 {"detail":"Invalid credentials"}`. The body is a **constant string**: no trailing exception text, no path-dependent variations. The underlying reason is logged server-side under the `housewise.auth` logger so we keep diagnostic visibility without leaking an enumeration signal. (Lesson from QA pass 2026-06-17 / BUG-008.)
+
 ### 7.3 Token refresh — handled by the SDK
 
 There is **no** `/auth/refresh` endpoint. The Supabase JS SDK refreshes automatically ~60s before access-token expiry. Defaults: access token ~1h, refresh token rotation enabled. Don't override.

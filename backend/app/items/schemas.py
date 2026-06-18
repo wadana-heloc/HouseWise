@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ItemCategory = Literal[
     "dairy", "meat", "grains", "bakery", "pantry",
@@ -24,6 +24,8 @@ ScanMediaType = Literal["image/jpeg", "image/png", "image/webp", "image/gif"]
 
 
 class ScanImageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     image_base64: str = Field(min_length=1, max_length=SCAN_IMAGE_MAX_BASE64)
     media_type: ScanMediaType
 
@@ -36,6 +38,8 @@ class ProductScanResponse(BaseModel):
 
 
 class ItemCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=120)
     category: ItemCategory
     quantity: Decimal = Field(default=Decimal(1), gt=0, max_digits=10, decimal_places=3)
@@ -45,6 +49,8 @@ class ItemCreate(BaseModel):
 
 
 class ItemUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: Optional[str] = Field(default=None, min_length=1, max_length=120)
     category: Optional[ItemCategory] = None
     quantity: Optional[Decimal] = Field(default=None, gt=0, max_digits=10, decimal_places=3)
@@ -60,6 +66,8 @@ class ItemUpdate(BaseModel):
 
 
 class ItemStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     status: ItemStatus
 
 

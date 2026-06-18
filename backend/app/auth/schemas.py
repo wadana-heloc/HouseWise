@@ -1,6 +1,6 @@
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, BaseModel, EmailStr, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
 
 from .password_policy import MAX_LENGTH, validate_password
 
@@ -8,6 +8,8 @@ Password = Annotated[str, Field(max_length=MAX_LENGTH), AfterValidator(validate_
 
 
 class SignupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     household_name: str = Field(min_length=1, max_length=120)
     display_name: str = Field(min_length=1, max_length=80)
     email: EmailStr
@@ -15,6 +17,8 @@ class SignupRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     email: EmailStr
     password: str
 
@@ -34,10 +38,14 @@ class SignupResponse(BaseModel):
 
 
 class PasswordResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     email: EmailStr
 
 
 class PasswordUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     new_password: Password
 
 

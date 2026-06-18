@@ -96,6 +96,23 @@ def test_login_works_immediately_after_signup(client, created_users):
     assert s["refresh_token"]
 
 
+# BUG-008: client-facing 401 detail must be constant across all bad-credential
+# paths so the response body can't be used to enumerate users / TLDs / etc.
+def test_login_invalid_credentials_returns_constant_detail(client, created_users):
+    admin = _signup_admin(client, created_users)
+
+    # 1. Unknown email
+    r1 = client.post("/auth/login", json={"email": unique_email(), "password": "anything-Aa1!"})
+    # 2. Known email, wrong password
+    r2 = client.post("/auth/login", json={"email": admin["email"], "password": "wrong-Aa1!"})
+    # 3. Unusual but valid email shape, never registered
+    r3 = client.post("/auth/login", json={"email": "test+x@a.bb", "password": "anything-Aa1!"})
+
+    for r in (r1, r2, r3):
+        assert r.status_code == 401, r.text
+        assert r.json() == {"detail": "Invalid credentials"}
+
+
 # ---------- /me ----------
 
 def test_me_returns_user_and_household(client, created_users):

@@ -176,3 +176,27 @@ def test_family_patch_403(client, created_users):
 def test_unauthenticated_401(client):
     assert client.get(_BASE).status_code in (401, 403)
     assert client.patch(_BASE, json={"report_day": 3}).status_code in (401, 403)
+
+
+# ---------- BUG-002: nonexistent member id → 404, not 500 ----------
+
+_GHOST_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+def test_reset_password_nonexistent_member_returns_404(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = client.post(
+        f"/household/members/{_GHOST_UUID}/password",
+        headers=_hdrs(admin["access_token"]),
+        json={"new_password": "Zz9!aaaaaaaa"},
+    )
+    assert r.status_code == 404, r.text
+
+
+def test_delete_nonexistent_member_returns_404(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = client.delete(
+        f"/household/members/{_GHOST_UUID}",
+        headers=_hdrs(admin["access_token"]),
+    )
+    assert r.status_code == 404, r.text

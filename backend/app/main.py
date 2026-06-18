@@ -12,7 +12,8 @@ for _folder in ("image-agent", "cookbook-agent", "recipe-photo-agent", "meal-pla
     if _p.is_dir() and str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from .auth.router import router as auth_router
 from .cookbook.router import router as cookbook_router
@@ -58,6 +59,54 @@ app = FastAPI(
     ),
     lifespan=lifespan,
 )
+# Reject JSON bodies nested deeper than this. Python's default recursion
+# limit (~1000) trips inside stdlib json/Pydantic on deeply nested input,
+# escaping as a 500. Real payloads in this API top out around depth 3, so
+# 32 is generous while staying well under the recursion ceiling.
+MAX_JSON_DEPTH = 32
+
+
+def _exceeds_json_depth(raw: bytes, limit: int) -> bool:
+    depth = 0
+    in_string = False
+    escape = False
+    for b in raw:
+        if escape:
+            escape = False
+            continue
+        if in_string:
+            if b == 0x5C:    # backslash
+                escape = True
+            elif b == 0x22:  # "
+                in_string = False
+            continue
+        if b == 0x22:
+            in_string = True
+        elif b == 0x7B or b == 0x5B:  # { [
+            depth += 1
+            if depth > limit:
+                return True
+        elif b == 0x7D or b == 0x5D:  # } ]
+            depth -= 1
+    return False
+
+
+@app.middleware("http")
+async def json_depth_limit(request: Request, call_next):
+    if "application/json" in request.headers.get("content-type", "").lower():
+        body = await request.body()
+        if body and _exceeds_json_depth(body, MAX_JSON_DEPTH):
+            return JSONResponse(
+                {"detail": f"JSON nesting exceeds maximum depth of {MAX_JSON_DEPTH}"},
+                status_code=422,
+            )
+        # ASGI receive is single-shot — replay the cached body for downstream.
+        async def receive():
+            return {"type": "http.request", "body": body, "more_body": False}
+        request._receive = receive
+    return await call_next(request)
+
+
 app.include_router(auth_router)
 app.include_router(cookbook_router)
 app.include_router(household_router)

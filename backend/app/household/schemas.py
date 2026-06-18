@@ -1,7 +1,7 @@
 from typing import Annotated, Literal, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from ..auth.schemas import Password
 
@@ -23,12 +23,16 @@ def _validate_iana_timezone(v: str) -> str:
 
 
 class CreateMemberRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     email: EmailStr
     password: Password
     display_name: str = Field(min_length=1, max_length=80)
 
 
 class UpdateMemberRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     display_name: Optional[str] = Field(default=None, min_length=1, max_length=80)
     email: Optional[EmailStr] = None
 
@@ -47,6 +51,8 @@ class CreateMemberResponse(BaseModel):
 
 
 class AdminResetMemberPasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     new_password: Password
 
 
@@ -72,6 +78,8 @@ class ReportSettings(BaseModel):
 
 
 class ReportSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     report_day: Optional[ReportDay] = None
     report_time: Optional[ReportTime] = None
     report_timezone: Optional[str] = Field(default=None, min_length=1, max_length=64)

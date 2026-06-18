@@ -1,8 +1,12 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..settings import settings
 from ..supabase_client import get_anon_supabase, get_supabase
 from .deps import CurrentUser, bearer_token, current_user
+
+log = logging.getLogger("housewise.auth")
 from .schemas import (
     LoginRequest,
     OkResponse,
@@ -133,10 +137,14 @@ def login(body: LoginRequest):
     try:
         res = sb.auth.sign_in_with_password({"email": body.email, "password": body.password})
     except Exception as e:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"Invalid credentials: {e}")
+        # Log server-side for debugging real auth blowups; never leak the
+        # reason to the client — it differs between "user not found" / "wrong
+        # password" / TLD validation and would let an attacker enumerate.
+        log.warning("auth/login failed: %s: %s", type(e).__name__, e)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
 
     if not res.session:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Login failed")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
 
     s = res.session
     user_payload = res.user.model_dump() if hasattr(res.user, "model_dump") else dict(res.user)

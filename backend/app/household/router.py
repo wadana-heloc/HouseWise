@@ -205,8 +205,8 @@ def admin_reset_member_password(
             "Admins use /auth/password-update for their own password",
         )
 
-    member = sb.table("users").select("household_id").eq("id", member_id).single().execute()
-    if not member.data or member.data.get("household_id") != household_id:
+    member = sb.table("users").select("household_id").eq("id", member_id).execute()
+    if not member.data or member.data[0].get("household_id") != household_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Member not in your household")
 
     # Note: this does NOT invalidate the member's existing access/refresh tokens.
@@ -322,10 +322,10 @@ def remove_member(member_id: str, admin: CurrentUser = Depends(require_role("adm
     if member_id == admin.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Admin cannot remove themselves")
 
-    member = sb.table("users").select("household_id, role").eq("id", member_id).single().execute()
-    if not member.data or member.data.get("household_id") != household_id:
+    member = sb.table("users").select("household_id, role").eq("id", member_id).execute()
+    if not member.data or member.data[0].get("household_id") != household_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Member not in your household")
-    if member.data.get("role") == "admin":
+    if member.data[0].get("role") == "admin":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot remove the household admin")
 
     sb.auth.admin.delete_user(member_id)

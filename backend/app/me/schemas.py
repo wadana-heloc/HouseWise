@@ -50,6 +50,8 @@ class DietaryPreferences(BaseModel):
 
 
 class DietaryPreferencesUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     dietary_types: Optional[list[str]] = Field(default=None, max_length=20)
     allergies: Optional[list[str]] = Field(default=None, max_length=50)
     dislikes: Optional[list[str]] = Field(default=None, max_length=50)
@@ -62,6 +64,8 @@ class DietaryPreferencesUpdate(BaseModel):
 
 
 class ProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     display_name: Optional[str] = Field(default=None, min_length=1, max_length=80)
     email: Optional[EmailStr] = None
 

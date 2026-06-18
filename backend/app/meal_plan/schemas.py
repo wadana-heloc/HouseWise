@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..items.schemas import ItemCategory
 
@@ -16,6 +16,8 @@ class MealRequest(BaseModel):
 
 
 class SubmissionUpsert(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     week_start: date
     busy_days: list[int] = Field(default_factory=list, max_length=7)
     meal_requests: list[MealRequest] = Field(default_factory=list, max_length=20)
@@ -87,10 +89,14 @@ class MealPlanOut(BaseModel):
 
 
 class GenerateMealPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     week_start: date
 
 
 class DayUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     meal_name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     prep_label: Optional[PrepLabel] = None
     notes: Optional[str] = Field(default=None, max_length=1000)
@@ -104,6 +110,8 @@ class DayUpdate(BaseModel):
 
 
 class ReactionUpsert(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     day_id: str
     reaction: MealPlanReaction
 

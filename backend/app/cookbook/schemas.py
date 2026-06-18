@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..items.schemas import SCAN_IMAGE_MAX_BASE64, ItemCategory
 
@@ -17,6 +17,8 @@ class RecipeIngredient(BaseModel):
 
 
 class RecipeCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=2000)
     ingredients: list[RecipeIngredient] = Field(default_factory=list)
@@ -30,6 +32,8 @@ class RecipeCreate(BaseModel):
 
 
 class RecipeUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=2000)
     ingredients: Optional[list[RecipeIngredient]] = None
@@ -68,11 +72,15 @@ class RecipeList(BaseModel):
 
 
 class GenerateRecipeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     prompt: str = Field(min_length=5, max_length=500)
     tag_hints: list[str] = Field(default_factory=list, max_length=10)
 
 
 class ExtractPhotoRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     image_base64: str = Field(min_length=1, max_length=SCAN_IMAGE_MAX_BASE64)
     media_type: Literal["image/jpeg", "image/png", "image/webp"]
 
