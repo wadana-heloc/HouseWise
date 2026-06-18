@@ -25,13 +25,16 @@ the blocking startup warm-up in `main.py`'s lifespan is fast (no runtime downloa
 | max-instances | `4` | cap fan-out |
 | cpu-boost | on | faster startup warm-up |
 | timeout | `120s` | scan-image can be slow |
-| ingress auth | `--no-allow-unauthenticated` | the API does its own JWT auth; see note below |
+| ingress auth | `--allow-unauthenticated` | the mobile client has no Google identity; the API enforces its own Supabase JWT auth |
 
-> **`--no-allow-unauthenticated`** blocks unauthenticated *Cloud Run platform*
-> access (IAM), which is not the same as the app's Supabase JWT auth. If the mobile
-> client calls Cloud Run directly over the public internet without a Google identity,
-> it can't satisfy platform IAM — switch to `--allow-unauthenticated` and rely solely
-> on the app's bearer-token auth. Decide this when wiring the mobile base URL.
+> **`--allow-unauthenticated`** opens the *Cloud Run platform* layer (grants
+> `roles/run.invoker` to `allUsers`). This is **not** app auth — every endpoint except
+> `/health` still requires a valid Supabase bearer, verified in
+> [`app/auth/deps.py`](../backend/app/auth/deps.py). It's set this way because the mobile
+> client calls Cloud Run directly over the internet with a Supabase token, not a Google
+> identity, so it can't satisfy platform IAM. If an org policy
+> (`iam.allowedPolicyMemberDomains`) blocks `allUsers`, the deploy step fails and you'd
+> front the service with an authenticating proxy / API gateway instead.
 
 ## Configuration → where it lives
 

@@ -50,7 +50,7 @@ steps:
       - --cpu-boost
       - --timeout=120
       - --port=8080
-      - --no-allow-unauthenticated
+      - --allow-unauthenticated
       - --set-env-vars=SUPABASE_URL=${_SUPABASE_URL},SUPABASE_JWKS_URL=${_SUPABASE_JWKS_URL},SUPABASE_JWT_ISSUER=${_SUPABASE_JWT_ISSUER},SUPABASE_JWT_AUDIENCE=authenticated,APP_DEEP_LINK=${_APP_DEEP_LINK}
       - --set-secrets=SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,SUPABASE_ANON_KEY=SUPABASE_ANON_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest
 
