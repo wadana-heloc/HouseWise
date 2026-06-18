@@ -26,14 +26,15 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#F5F7F5"
       },
-      "usesCleartextTraffic": true,
       "package": "ai.wadana.housewise",
       "permissions": [
-        "CAMERA",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
-        "RECEIVE_BOOT_COMPLETED",
-        "VIBRATE"
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -63,10 +64,25 @@
         {
           "photosPermission": "HouseWise needs photo library access to set profile avatars."
         }
+      ],
+      "expo-font",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "1e214db1-b4ec-42f1-a59f-15d64f8e961f"
+      }
     }
   }
 }
