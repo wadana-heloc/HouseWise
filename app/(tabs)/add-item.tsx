@@ -17,7 +17,7 @@ export default function AddItemScreen() {
   const router = useRouter();
   const { prefillName = '', lowStockFlagId = '' } = useLocalSearchParams<{ prefillName?: string; lowStockFlagId?: string }>();
   const addItem = useItemStore((s) => s.addItem);
-  const markOnList = useLowStockStore((s) => s.markOnList);
+  const deleteFlag = useLowStockStore((s) => s.deleteFlag);
 
   const [name, setName] = useState(prefillName);
   const [qty, setQty] = useState('1');
@@ -60,7 +60,7 @@ export default function AddItemScreen() {
       });
 
       if (lowStockFlagId) {
-        markOnList(lowStockFlagId);
+        deleteFlag(lowStockFlagId).catch(() => {});
         Alert.alert('Added to list', `"${name.trim()}" has been added to the shopping list.`, [
           { text: 'OK', onPress: () => router.back() },
         ]);

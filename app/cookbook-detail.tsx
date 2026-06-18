@@ -8,14 +8,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuthStore } from '../store/authStore';
 import { useCookbookStore } from '../store/cookbookStore';
+import { useMemberStore } from '../store/memberStore';
 import { cookbookService, Recipe } from '../services/cookbook';
 
 export default function CookbookDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { role } = useAuthStore();
+  const { role, userId } = useAuthStore();
   const isAdmin = role === 'admin';
   const { deleteRecipe, getPersonalizedDescription } = useCookbookStore();
+  const { members, fetchMembers } = useMemberStore();
 
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,6 +31,7 @@ export default function CookbookDetailScreen() {
       .then(setRecipe)
       .catch(() => Alert.alert('Error', 'Could not load recipe.'))
       .finally(() => setLoading(false));
+    fetchMembers();
   }, [id]);
 
   useEffect(() => {
@@ -82,6 +85,10 @@ export default function CookbookDetailScreen() {
 
   const displayDescription = personalizedDesc || recipe.description;
   const instructionSteps = recipe.instructions?.split('\n').filter(Boolean) ?? [];
+  const canEdit = isAdmin || recipe.submitted_by === userId;
+  const authorName = recipe.submitted_by
+    ? (members.find(m => m.id === recipe.submitted_by)?.display_name ?? null)
+    : null;
 
   return (
     <SafeAreaView className="flex-1 bg-bg-primary">
@@ -92,14 +99,21 @@ export default function CookbookDetailScreen() {
         <TouchableOpacity onPress={() => router.back()} hitSlop={8}>
           <Ionicons name="arrow-back" size={22} color="#3D6B55" />
         </TouchableOpacity>
-        {isAdmin && (
-          <TouchableOpacity onPress={handleDelete} disabled={deleting} hitSlop={8}>
-            {deleting
-              ? <ActivityIndicator size="small" color="#EF4444" />
-              : <Ionicons name="trash-outline" size={20} color="#EF4444" />
-            }
-          </TouchableOpacity>
-        )}
+        <View className="flex-row items-center gap-4">
+          {canEdit && (
+            <TouchableOpacity onPress={() => router.push(`/cookbook-edit?id=${recipe.id}`)} hitSlop={8}>
+              <Ionicons name="create-outline" size={20} color="#3D6B55" />
+            </TouchableOpacity>
+          )}
+          {isAdmin && (
+            <TouchableOpacity onPress={handleDelete} disabled={deleting} hitSlop={8}>
+              {deleting
+                ? <ActivityIndicator size="small" color="#EF4444" />
+                : <Ionicons name="trash-outline" size={20} color="#EF4444" />
+              }
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 48 }}>
@@ -125,6 +139,12 @@ export default function CookbookDetailScreen() {
               <Ionicons name="sparkles-outline" size={14} color="#A8C4B8" />
               <Text className="text-[12px] text-text-faint capitalize">{recipe.source.replace(/_/g, ' ')}</Text>
             </View>
+            {authorName != null && (
+              <View className="flex-row items-center gap-1.5">
+                <Ionicons name="person-outline" size={14} color="#A8C4B8" />
+                <Text className="text-[12px] text-text-faint">{authorName}</Text>
+              </View>
+            )}
           </View>
 
           {recipe.tags.length > 0 && (
@@ -140,7 +160,8 @@ export default function CookbookDetailScreen() {
 
         {/* Personalized / canonical description */}
         {(loadingDesc || displayDescription) && (
-          <View className="mx-5 my-4 bg-teal-50 border border-teal-100 rounded-2xl p-4">
+          <View className="mx-5 mt-4 bg-teal-50 border border-teal-100 rounded-2xl p-4">
+            <Text className="text-[11px] font-medium text-teal-500 uppercase tracking-wider mb-2">Why you might like it</Text>
             {loadingDesc ? (
               <View className="gap-2.5">
                 <View className="h-3 bg-teal-100 rounded-md w-3/4" />
@@ -150,6 +171,14 @@ export default function CookbookDetailScreen() {
             ) : (
               <Text className="text-[14px] text-teal-800 leading-5">{displayDescription}</Text>
             )}
+          </View>
+        )}
+
+        {/* Story */}
+        {recipe.story != null && (
+          <View className="mx-5 mt-4 bg-white border border-border rounded-2xl p-4">
+            <Text className="text-[11px] font-medium text-text-muted uppercase tracking-wider mb-2">About this recipe</Text>
+            <Text className="text-[14px] text-text-primary leading-6">{recipe.story}</Text>
           </View>
         )}
 

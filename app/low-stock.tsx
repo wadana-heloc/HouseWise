@@ -11,7 +11,7 @@ import { useLowStockStore } from '../store/lowStockStore';
 
 export default function LowStockScreen() {
   const router = useRouter();
-  const { flags, onListFlagIds, loading, error, fetchFlags, addFlag, deleteFlag } = useLowStockStore();
+  const { flags, loading, error, fetchFlags, addFlag, deleteFlag } = useLowStockStore();
   const [newItem, setNewItem] = useState('');
   const [adding, setAdding] = useState(false);
 
@@ -139,41 +139,30 @@ export default function LowStockScreen() {
             </View>
           )}
 
-          {flags.map((flag) => {
-            const isOnList = onListFlagIds.includes(flag.id);
-            return (
-              <View key={flag.id} className="bg-white border border-border rounded-xl px-4 py-3 gap-2">
-                <View className="flex-row items-center gap-3">
-                  <View className="w-2 h-2 rounded-full bg-amber-400" />
-                  <Text className="flex-1 text-[14px] font-medium text-text-primary">{flag.name}</Text>
-                  {/* Admin can delete any item */}
-                  <TouchableOpacity onPress={() => handleDelete(flag.id, flag.name)} hitSlop={8}>
-                    <Ionicons name="close-circle-outline" size={20} color="#94A3B8" />
-                  </TouchableOpacity>
-                </View>
-                <Text className="text-[12px] text-text-faint pl-5" numberOfLines={1}>
-                  Flagged by {flag.added_by_display_name} · {formatDistanceToNow(new Date(flag.created_at), { addSuffix: true })}
-                </Text>
-                <View className="pl-5 items-end">
-                  {isOnList ? (
-                    <View className="flex-row items-center gap-1">
-                      <Ionicons name="checkmark-circle" size={14} color="#1D9E75" />
-                      <Text className="text-[12px] text-teal-600">On list</Text>
-                    </View>
-                  ) : (
-                    <TouchableOpacity
-                      className="bg-teal-50 border border-teal-200 rounded-lg px-3 py-1.5"
-                      onPress={() => handleAddToList(flag.id, flag.name)}
-                      hitSlop={4}
-                      activeOpacity={0.75}
-                    >
-                      <Text className="text-[12px] font-semibold text-teal-700">+ Add to list</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
+          {flags.map((flag) => (
+            <View key={flag.id} className="bg-white border border-border rounded-xl px-4 py-3 gap-2">
+              <View className="flex-row items-center gap-3">
+                <View className="w-2 h-2 rounded-full bg-amber-400" />
+                <Text className="flex-1 text-[14px] font-medium text-text-primary">{flag.name}</Text>
+                <TouchableOpacity onPress={() => handleDelete(flag.id, flag.name)} hitSlop={8}>
+                  <Ionicons name="close-circle-outline" size={20} color="#94A3B8" />
+                </TouchableOpacity>
               </View>
-            );
-          })}
+              <Text className="text-[12px] text-text-faint pl-5" numberOfLines={1}>
+                Flagged by {flag.added_by_display_name} · {formatDistanceToNow(new Date(flag.created_at), { addSuffix: true })}
+              </Text>
+              <View className="pl-5 items-end">
+                <TouchableOpacity
+                  className="bg-teal-50 border border-teal-200 rounded-lg px-3 py-1.5"
+                  onPress={() => handleAddToList(flag.id, flag.name)}
+                  hitSlop={4}
+                  activeOpacity={0.75}
+                >
+                  <Text className="text-[12px] font-semibold text-teal-700">+ Add to list</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
         </View>
 
         <View style={{ height: 16 }} />

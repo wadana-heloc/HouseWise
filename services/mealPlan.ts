@@ -83,7 +83,7 @@ export const mealPlanService = {
   generatePlan: (weekStart: string) =>
     api.post<MealPlan>('/meal-plan/generate', { week_start: weekStart }).then(r => r.data),
 
-  updateDay: (planId: string, dayId: string, data: Partial<MealPlanDay>) =>
+  updateDay: (planId: string, dayId: string, data: Partial<Pick<MealPlanDay, 'meal_name' | 'prep_label' | 'notes' | 'recipe_id'>>) =>
     api.patch<MealPlan>(`/meal-plan/${planId}/days/${dayId}`, data).then(r => r.data),
 
   // Deferred — no UI yet

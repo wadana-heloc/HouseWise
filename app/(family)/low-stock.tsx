@@ -13,7 +13,7 @@ import { useAuthStore } from '../../store/authStore';
 export default function FamilyLowStockScreen() {
   const router = useRouter();
   const userId = useAuthStore((s) => s.userId);
-  const { flags, onListFlagIds, loading, error, fetchFlags, addFlag, deleteFlag } = useLowStockStore();
+  const { flags, loading, error, fetchFlags, addFlag, deleteFlag } = useLowStockStore();
   const [newItem, setNewItem] = useState('');
   const [adding, setAdding] = useState(false);
 
@@ -142,14 +142,12 @@ export default function FamilyLowStockScreen() {
           )}
 
           {flags.map((flag) => {
-            const isOnList = onListFlagIds.includes(flag.id);
             const canDelete = flag.added_by === userId;
             return (
               <View key={flag.id} className="bg-white border border-border rounded-xl px-4 py-3 gap-2">
                 <View className="flex-row items-center gap-3">
                   <View className="w-2 h-2 rounded-full bg-amber-400" />
                   <Text className="flex-1 text-[14px] font-medium text-text-primary">{flag.name}</Text>
-                  {/* Family members can only remove flags they added */}
                   {canDelete && (
                     <TouchableOpacity onPress={() => handleDelete(flag.id, flag.name)} hitSlop={8}>
                       <Ionicons name="close-circle-outline" size={20} color="#94A3B8" />
@@ -160,21 +158,14 @@ export default function FamilyLowStockScreen() {
                   Flagged by {flag.added_by_display_name} · {formatDistanceToNow(new Date(flag.created_at), { addSuffix: true })}
                 </Text>
                 <View className="pl-5 items-end">
-                  {isOnList ? (
-                    <View className="flex-row items-center gap-1">
-                      <Ionicons name="checkmark-circle" size={14} color="#1D9E75" />
-                      <Text className="text-[12px] text-teal-600">On list</Text>
-                    </View>
-                  ) : (
-                    <TouchableOpacity
-                      className="bg-teal-50 border border-teal-200 rounded-lg px-3 py-1.5"
-                      onPress={() => handleAddToList(flag.id, flag.name)}
-                      hitSlop={4}
-                      activeOpacity={0.75}
-                    >
-                      <Text className="text-[12px] font-semibold text-teal-700">+ Add to list</Text>
-                    </TouchableOpacity>
-                  )}
+                  <TouchableOpacity
+                    className="bg-teal-50 border border-teal-200 rounded-lg px-3 py-1.5"
+                    onPress={() => handleAddToList(flag.id, flag.name)}
+                    hitSlop={4}
+                    activeOpacity={0.75}
+                  >
+                    <Text className="text-[12px] font-semibold text-teal-700">+ Add to list</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             );

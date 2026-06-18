@@ -56,6 +56,7 @@ export default function CookbookAddScreen() {
   // Form state shared across all tabs
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [story, setStory] = useState('');
   const [instructions, setInstructions] = useState('');
   const [ingredients, setIngredients] = useState<IngredientRow[]>([emptyIngredient()]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -152,6 +153,7 @@ export default function CookbookAddScreen() {
     const payload = {
       name: name.trim(),
       description: description.trim() || null,
+      story: story.trim() || null,
       instructions: instructions.trim() || null,
       ingredients: validIngredients.map(i => ({
         name: i.name.trim(),
@@ -378,6 +380,22 @@ export default function CookbookAddScreen() {
                 multiline
                 numberOfLines={3}
                 textAlignVertical="top"
+              />
+            </View>
+
+            {/* Story */}
+            <View className="gap-2">
+              <Text className="text-[12px] font-medium text-text-muted uppercase tracking-wider">About this recipe</Text>
+              <TextInput
+                className="bg-white border border-border rounded-xl px-4 py-3.5 text-[14px] text-text-primary"
+                placeholder="Origin, family note, occasion… (optional)"
+                placeholderTextColor="#A8C4B8"
+                value={story}
+                onChangeText={setStory}
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+                maxLength={5000}
               />
             </View>
 
