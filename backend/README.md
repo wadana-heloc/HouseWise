@@ -154,6 +154,23 @@ If `TEST_SUPABASE_*` vars are unset, all integration tests **skip with a clear r
 
 Use a **dedicated test project** — tests create and delete users in `auth.users`. They clean up after themselves but accidents happen.
 
+## Deployment (Cloud Run)
+
+Containerized on **Google Cloud Run**, CI via **Cloud Build**. Push to `main` →
+image rebuilds → new revision rolls out. Full runbook (one-time setup, rollback,
+secrets, verification): [docs/deployment-flow.md](../docs/deployment-flow.md).
+
+- The [`Dockerfile`](../Dockerfile) and [`.dockerignore`](../.dockerignore) live at the
+  **repo root**, not here — the build context needs both `backend/` and `ai_agents/`
+  because `app/main.py` imports the agents via `sys.path` (`parents[2]`).
+- Image installs **CPU-only torch** and **bakes the EasyOCR model** in so the startup
+  warm-up is fast. Service runs `4Gi` / `2 CPU` / `min-instances=1` to keep one warm.
+- Config comes from env (no `.env` in the image). Secrets
+  (`SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `ANTHROPIC_API_KEY`) live in
+  **Secret Manager**; the rest are plain Cloud Run env vars.
+- **Migrations are not part of the deploy** — apply them by hand in the Supabase SQL
+  Editor *before* shipping code that depends on them.
+
 ## Non-negotiables baked into this code (§9 of the spec)
 
 1. JWKS / ES256 only — see [app/auth/deps.py](app/auth/deps.py).

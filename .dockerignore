@@ -1,0 +1,27 @@
+.git
+.gitignore
+
+# Local venv — never ship it (and it would balloon the build context).
+backend/.venv
+
+# Secrets / local config.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python caches.
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Tests aren't needed at runtime.
+backend/tests
+ai_agents/**/test_*.py
+ai_agents/**/run_test.py
+
+# Docs and planning.
+docs
+*.md
+!backend/README.md
