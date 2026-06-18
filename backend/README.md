@@ -8,7 +8,7 @@ FastAPI + Supabase. Owns auth, households, and family-member membership.
 - **Supabase** (Postgres + Auth) — JWKS / ES256 verification only, no HS256 shared secret
 - `supabase-py` client with the `service_role` key (server-side only)
 
-## Setup
+## Setup  
 
 ```powershell
 cd backend
