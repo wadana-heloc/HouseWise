@@ -1,4 +1,4 @@
-# HouseWise Backend
+# HouseWise Backend 
 
 FastAPI + Supabase. Owns auth, households, and family-member membership.
 
@@ -8,7 +8,7 @@ FastAPI + Supabase. Owns auth, households, and family-member membership.
 - **Supabase** (Postgres + Auth) — JWKS / ES256 verification only, no HS256 shared secret
 - `supabase-py` client with the `service_role` key (server-side only)
 
-## Setup
+## Setup  
 
 ```powershell
 cd backend
@@ -22,7 +22,7 @@ uvicorn app.main:app --reload
 
 Dependencies are declared in [pyproject.toml](pyproject.toml). The `[dev]` extra pulls test/lint/typecheck tools — drop it in production deploys (`pip install -e .`).
 
-## Environment variables
+## Environment variables    
 
 See [.env.example](.env.example) for the full list. Required at startup:
 
@@ -53,24 +53,28 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | POST   | `/household/members/{id}/password` | bearer:admin | Admin resets a member's password directly. Does not invalidate the member's existing sessions. |
 | PATCH  | `/household/members/{id}` | bearer:admin | Admin updates a member's `display_name` and/or `email`. Email change is instant (no confirmation email). 400 on self-target (use `/me/profile`). |
 | DELETE | `/household/members/{id}` | bearer:admin | Remove a family member. |
-| GET    | `/me` | bearer | Current user (incl. `health_preferences`) + household snapshot. |
+| GET    | `/household/report-settings` | bearer:admin | Read the household's weekly shopping-report schedule (`report_day` ISO 1..7, `report_time` "HH:MM" 24h, `report_timezone` IANA). All fields always present (defaults seeded at DB level). |
+| PATCH  | `/household/report-settings` | bearer:admin | Update any subset of the three fields. Unspecified fields unchanged. 422 on empty body, bad day, malformed time, or unknown IANA timezone. |
+| GET    | `/me` | bearer | Current user (incl. `health_preferences` and `dietary_preferences`) + household snapshot. |
 | PATCH  | `/me/profile` | bearer | Self-update `display_name` and/or `email`. Email change is instant (no confirmation email). |
-| PATCH  | `/me/health-preferences` | bearer | Partial update of the per-user dietary toggles (high_protein, low_calories, low_carbs, low_sugar, whole_grain). Unknown keys → 422. |
+| PATCH  | `/me/health-preferences` | bearer | Partial update of the per-user diet toggles (high_protein, low_calories, low_carbs, low_sugar, whole_grain). Unknown keys → 422. |
+| PATCH  | `/me/dietary-preferences` | bearer | Partial update of the caller's `dietary_types` / `allergies` / `dislikes` (free-text lists). FE sends the full replacement list for any key it wants to change. |
 | POST   | `/items` | bearer | Add an item to the caller's household. Server sets `status='pending'`, `added_by=caller`. |
 | GET    | `/items` | bearer | List items in the caller's household. Filters: `status`, `urgent`, `category`, `added_by`. |
 | GET    | `/items/{id}` | bearer | Fetch one item (404 cross-household). |
-| PATCH  | `/items/{id}` | bearer | Update any non-status field. Empty body → 422. |
+| PATCH  | `/items/{id}` | bearer (creator or admin) | Update any non-status field on a **pending** item. Non-creator non-admin → 403. Non-pending status → 409 for everyone (FR-017; admin must move status back to pending first). Empty body → 422. |
 | POST   | `/items/{id}/status` | bearer | Transition `status`. Family may set `done` or undo `done→pending`; admin only for `in_review`/`approved`/`rejected` and reopening `rejected→pending`. |
-| DELETE | `/items/{id}` | bearer | Delete. Creator or any admin in the household. |
+| DELETE | `/items/{id}` | bearer (creator or admin) | Delete a **pending** item. Non-creator non-admin → 403. Non-pending status → 409 for everyone (FR-018). |
 | POST   | `/items/scan-image` | bearer | Run a product photo through the image-analysis agent. Pass-through — does not persist. Always 200; failures live in `reason`. |
 | GET    | `/cookbook/recipes` | bearer | List recipes. Default scope: approved + caller's own pending. Filters: `tag`, `search`, `source`, `status`. |
 | POST   | `/cookbook/recipes` | bearer | Save a recipe (all three paths). Body `source` defaults to `manual`; FE sets `ai_generated` / `photo` after a preview. Status = admin → `approved`, family → `pending`. |
 | GET    | `/cookbook/recipes/{id}` | bearer | Fetch one. 404 if pending and not own/admin, or cross-household. |
-| PATCH  | `/cookbook/recipes/{id}` | bearer:admin | Edit any field including `status`. |
+| PATCH  | `/cookbook/recipes/{id}` | bearer (admin or creator) | Edit any field. Admin can also change `status`; non-admin trying to change `status` → 403. Creator can edit at any status (pending or approved). |
 | DELETE | `/cookbook/recipes/{id}` | bearer:admin | Hard delete. |
 | POST   | `/cookbook/recipes/{id}/approve` | bearer:admin | Flip a pending recipe to approved. Idempotent. |
 | POST   | `/cookbook/recipes/generate` | bearer | **Pass-through preview** — calls the cookbook agent and returns a `RecipePreview` (no DB write). FE saves via `POST /cookbook/recipes` with `source='ai_generated'`. 502 on agent total failure. |
 | POST   | `/cookbook/recipes/extract-photo` | bearer | **Pass-through preview** — calls the photo agent and returns a `RecipePreview` (no DB write); partial extractions carry a `reason` field. FE saves via `POST /cookbook/recipes` with `source='photo'`. 502 only on no-name failure. |
+| GET    | `/cookbook/recipes/{id}/description` | bearer | Per-user, AI-personalized recipe blurb. Cached in `recipe_personalized_descriptions`; regenerated when the recipe is edited. May return `description: ""` on agent failure (still cached). |
 | POST   | `/low-stock` | bearer | Flag an item as running low. 409 if the name is already flagged in this household (any member). |
 | GET    | `/low-stock` | bearer | List the caller's household flags, newest first. Each row includes `added_by_display_name`. |
 | DELETE | `/low-stock/{flag_id}` | bearer | Clear a flag. Any household member may delete any flag. |
@@ -78,12 +82,15 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | GET    | `/stores` | bearer | List the caller's household stores, alphabetical. Any member can read. |
 | PATCH  | `/stores/{store_id}` | bearer:admin | Update name and/or URL. Same uniqueness + URL rules as POST. |
 | DELETE | `/stores/{store_id}` | bearer:admin | Remove a store. |
-| POST   | `/meal-plan/submissions` | bearer | Upsert caller's week submission (busy days + meal requests). Re-submitting same week replaces. |
+| POST   | `/meal-plan/submissions` | bearer | Upsert caller's week submission (busy days + meal requests + optional `week_notes`). Re-submitting same week replaces; omitting `week_notes` clears it. |
 | GET    | `/meal-plan/submissions/me` | bearer | Caller's own submission for `?week_start=...`. 404 if not yet submitted. |
 | GET    | `/meal-plan/submissions/status` | bearer | Per-member `submitted: bool` for `?week_start=...`. Booleans only; content not leaked. |
 | GET    | `/meal-plan/{week_start}` | bearer | Plan + 7 days sorted by day_of_week. 404 if no plan yet. |
 | POST   | `/meal-plan/generate` | bearer:admin | Generate / re-generate the week's plan via the meal-plan agent. 502 on total agent failure. |
 | PATCH  | `/meal-plan/{plan_id}/days/{day_id}` | bearer:admin | Edit one day's `meal_name`, `prep_label`, `notes`, or `recipe_id`. |
+| POST   | `/meal-plan/{plan_id}/finalize` | bearer:admin | Flip `status` to `'finalized'` and return the updated plan. **Does not touch `/items`** — FE reads the plan's days and pushes whichever ingredients it wants into the shopping list itself. Idempotent. |
+| POST   | `/meal-plan/{plan_id}/react` | bearer | Upsert caller's reaction on one day. `{day_id, reaction: 'liked' \| 'disliked'}`. 409 if plan is still `'draft'`. |
+| GET    | `/meal-plan/{plan_id}/reactions` | bearer | Every household member's reactions across the plan's 7 days. |
 | GET    | `/health` | public | Liveness. |
 
 Items flow + state machine + permission matrix: [docs/items-flow.md](../docs/items-flow.md).
@@ -100,6 +107,10 @@ Meal plan (submissions + AI generate + day-edit; 502 on agent failure): [docs/me
 
 - **Email**: every endpoint that accepts an email uses Pydantic's `EmailStr` (RFC-5322 syntax). Malformed addresses → 422.
 - **Password policy** (enforced on signup, member create, member-password reset, and self password-update — **not** on `/auth/login`): ≥8 chars, must contain at least one lowercase letter, one uppercase letter, one digit, and one special character (`string.punctuation`). Violations → 422 with a message listing what's missing. Single source of truth: [app/auth/password_policy.py](app/auth/password_policy.py).
+- **JSON nesting depth**: every `application/json` request body is pre-scanned by [`json_depth_limit`](app/main.py) middleware and rejected with 422 if nesting exceeds **32 levels** (anti-recursion-bomb). The scan is iterative, so it can't trip the same `RecursionError` it's protecting against. Adjust `MAX_JSON_DEPTH` in [app/main.py](app/main.py) if a legitimate endpoint ever needs more.
+- **Strict request bodies**: every top-level write schema (Item/LowStock/Store/Recipe/Member/Submission/…) has `model_config = ConfigDict(extra="forbid")`. Unknown keys return `422 {"type":"extra_forbidden", "loc":["body","<key>"], …}` naming the offending field instead of silently dropping it. Nested input models (e.g. `MealRequest`, `RecipeIngredient`) still permit extras — tighten on a per-bug basis.
+- **Name trimming**: `items.name` and `low_stock.name` on create/update use `StringConstraints(strip_whitespace=True, min_length=1)`. Leading/trailing whitespace is stripped before storage; whitespace-only names → 422 (FR-012). Item duplicates are intentionally allowed at the backend per FR-024 — dedup is an FE-side soft warning, not a 409. `low_stock` keeps its DB `unique (household_id, lower(name))` constraint.
+- **Login error parity**: every bad-credentials path on `/auth/login` returns the constant body `{"detail":"Invalid credentials"}` — no path-dependent reason text. The reason is logged server-side under `housewise.auth`. Keeps enumeration surface flat.
 
 ## Database
 
@@ -114,6 +125,11 @@ Run migrations in order in the Supabase SQL Editor:
 7. [supabase/migrations/0007_init_stores.sql](../supabase/migrations/0007_init_stores.sql) — `public.stores` + unique `(household_id, lower(name))` + GRANTs + same-household SELECT RLS + `updated_at` trigger.
 8. [supabase/migrations/0008_init_cookbook.sql](../supabase/migrations/0008_init_cookbook.sql) — `public.recipes` + `recipe_source` / `recipe_status` enums + GRANTs + RLS (approved-or-own-pending) + `updated_at` trigger.
 9. [supabase/migrations/0009_init_meal_plan.sql](../supabase/migrations/0009_init_meal_plan.sql) — `public.meal_plan_submissions`, `public.meal_plans`, `public.meal_plan_days` + `meal_plan_status` / `prep_label` enums + GRANTs + same-household SELECT RLS + `updated_at` trigger.
+10. [supabase/migrations/0010_dietary_prefs_and_week_notes.sql](../supabase/migrations/0010_dietary_prefs_and_week_notes.sql) — adds `public.users.dietary_preferences jsonb` (default `{dietary_types:[], allergies:[], dislikes:[]}`) and `public.meal_plan_submissions.week_notes text` (nullable, ≤ 2000 chars).
+11. [supabase/migrations/0011_meal_plan_day_reactions.sql](../supabase/migrations/0011_meal_plan_day_reactions.sql) — `public.meal_plan_day_reactions` + `meal_plan_reaction` enum (`liked`/`disliked`) + same-household SELECT RLS + `updated_at` trigger. Keyed on `(day_id, user_id)`; cascades with `meal_plan_days`.
+12. [supabase/migrations/0012_recipe_personalized_descriptions.sql](../supabase/migrations/0012_recipe_personalized_descriptions.sql) — `public.recipe_personalized_descriptions` cache table + per-user SELECT RLS (`user_id = auth.uid()`). Staleness checked in the app layer against `recipes.updated_at`.
+13. [supabase/migrations/0013_household_report_settings.sql](../supabase/migrations/0013_household_report_settings.sql) — adds `report_day smallint NOT NULL DEFAULT 7` (ISO weekday), `report_time text NOT NULL DEFAULT '09:00'`, and `report_timezone text NOT NULL DEFAULT 'UTC'` (IANA) to `public.households`. Backfills existing rows.
+14. [supabase/migrations/0014_recipe_story.sql](../supabase/migrations/0014_recipe_story.sql) — adds `story text` to `public.recipes` (nullable, 1..5000 chars when present). Manually authored — AI generate / photo extract endpoints do not populate this field. Existing recipes stay `NULL`.
 
 0001 creates:
 - `public.households`, `public.users` with FKs into `auth.users`
@@ -138,6 +154,23 @@ pytest
 If `TEST_SUPABASE_*` vars are unset, all integration tests **skip with a clear reason** (they do not silently pass).
 
 Use a **dedicated test project** — tests create and delete users in `auth.users`. They clean up after themselves but accidents happen.
+
+## Deployment (Cloud Run)
+
+Containerized on **Google Cloud Run**, CI via **Cloud Build**. Push to `main` →
+image rebuilds → new revision rolls out. Full runbook (one-time setup, rollback,
+secrets, verification): [docs/deployment-flow.md](../docs/deployment-flow.md).
+
+- The [`Dockerfile`](../Dockerfile) and [`.dockerignore`](../.dockerignore) live at the
+  **repo root**, not here — the build context needs both `backend/` and `ai_agents/`
+  because `app/main.py` imports the agents via `sys.path` (`parents[2]`).
+- Image installs **CPU-only torch** and **bakes the EasyOCR model** in so the startup
+  warm-up is fast. Service runs `4Gi` / `2 CPU` / `min-instances=1` to keep one warm.
+- Config comes from env (no `.env` in the image). Secrets
+  (`SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `ANTHROPIC_API_KEY`) live in
+  **Secret Manager**; the rest are plain Cloud Run env vars.
+- **Migrations are not part of the deploy** — apply them by hand in the Supabase SQL
+  Editor *before* shipping code that depends on them.
 
 ## Non-negotiables baked into this code (§9 of the spec)
 

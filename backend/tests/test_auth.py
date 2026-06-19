@@ -96,6 +96,39 @@ def test_login_works_immediately_after_signup(client, created_users):
     assert s["refresh_token"]
 
 
+# BUG-008: client-facing 401 detail must be constant across all bad-credential
+# paths so the response body can't be used to enumerate users / TLDs / etc.
+def test_login_invalid_credentials_returns_constant_detail(client, created_users):
+    admin = _signup_admin(client, created_users)
+
+    # 1. Unknown email
+    r1 = client.post("/auth/login", json={"email": unique_email(), "password": "anything-Aa1!"})
+    # 2. Known email, wrong password
+    r2 = client.post("/auth/login", json={"email": admin["email"], "password": "wrong-Aa1!"})
+    # 3. Unusual but valid email shape, never registered
+    r3 = client.post("/auth/login", json={"email": "test+x@a.bb", "password": "anything-Aa1!"})
+
+    for r in (r1, r2, r3):
+        assert r.status_code == 401, r.text
+        assert r.json() == {"detail": "Invalid credentials"}
+
+
+# BUG-008 (second half): EmailStr previously 422'd on RFC-6761 reserved TLDs
+# and other format-violations, leaking the format-validation path. LoginRequest
+# now accepts any str so Supabase is the sole arbiter — all bad shapes 401.
+def test_login_reserved_tld_email_returns_401_not_422(client):
+    cases = [
+        {"email": "nobody@x.test", "password": "anything-Aa1!"},      # reserved TLD
+        {"email": "nobody@y.example", "password": "anything-Aa1!"},   # reserved TLD
+        {"email": "not-an-email", "password": "anything-Aa1!"},       # malformed
+        {"email": "", "password": "anything-Aa1!"},                   # empty
+    ]
+    for body in cases:
+        r = client.post("/auth/login", json=body)
+        assert r.status_code == 401, f"{body} -> {r.status_code} {r.text}"
+        assert r.json() == {"detail": "Invalid credentials"}, body
+
+
 # ---------- /me ----------
 
 def test_me_returns_user_and_household(client, created_users):

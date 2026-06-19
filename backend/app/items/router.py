@@ -192,17 +192,38 @@ def update_item(
     Only the fields you include in the body are touched. To change `status`,
     use `POST /items/{id}/status` — this endpoint will not.
 
-    Any authenticated household member may patch any item in their household
-    (not restricted to the creator). Cross-household patches return 404.
+    **Allowed callers** (FR-017): the original creator (`added_by == caller.id`)
+    or any admin in the same household. Any other household member gets 403.
 
-    Errors: 401 missing/invalid bearer. 403 caller is not in a household.
-    404 item not found or not in caller's household. 422 empty body, bad enum,
-    `quantity <= 0`, or `item_id` is not a UUID.
+    **Allowed when** (FR-017): only while the item is in `status='pending'`.
+    Editing an `in_review`, `approved`, `rejected`, or `done` item is blocked
+    with **409** for everyone, admin included. To edit such an item, an admin
+    must first move it back to `pending` via `POST /items/{id}/status`.
+
+    Cross-household patches return 404 so existence isn't leaked.
+
+    Errors: 401 missing/invalid bearer. 403 caller is not in a household, or
+    is a non-creator non-admin family member. 404 item not found or not in
+    caller's household. 409 item is not in `pending`. 422 empty body, bad
+    enum, `quantity <= 0`, or `item_id` is not a UUID.
     """
     sb = get_supabase()
-    household_id, _ = _user_household(sb, user.id)
+    household_id, role = _user_household(sb, user.id)
     item_id_str = str(item_id)
-    _fetch_item_in_household(sb, item_id_str, household_id)
+    item = _fetch_item_in_household(sb, item_id_str, household_id)
+
+    if role != "admin" and item.get("added_by") != user.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only the item creator or an admin may edit",
+        )
+
+    if item["status"] != "pending":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Cannot edit item — status is '{item['status']}'. "
+            "Only pending items are editable.",
+        )
 
     patch: dict = body.model_dump(exclude_unset=True)
     if "quantity" in patch and patch["quantity"] is not None:
@@ -260,8 +281,14 @@ def update_status(
 def delete_item(item_id: UUID, user: CurrentUser = Depends(current_user)):
     """Permanently delete an item.
 
-    Allowed only for the original creator (`added_by == caller.id`) or any
-    admin in the same household. Any other household member gets 403.
+    **Allowed callers** (FR-018): the original creator (`added_by == caller.id`)
+    or any admin in the same household. Any other household member gets 403.
+
+    **Allowed when** (FR-018): only while the item is in `status='pending'`.
+    Deleting an `in_review`, `approved`, `rejected`, or `done` item is blocked
+    with **409** for everyone, admin included. Move the item back to `pending`
+    via `POST /items/{id}/status` first if a delete is really needed.
+
     Cross-household deletes return 404.
 
     The delete is hard — there is no soft-delete column. If you need an
@@ -269,7 +296,7 @@ def delete_item(item_id: UUID, user: CurrentUser = Depends(current_user)):
 
     Errors: 401 missing/invalid bearer. 403 caller is not in a household, or
     is a non-creator, non-admin family member. 404 item not found or not in
-    caller's household. 422 `item_id` is not a UUID.
+    caller's household. 409 item is not in `pending`. 422 `item_id` is not a UUID.
     """
     sb = get_supabase()
     household_id, role = _user_household(sb, user.id)
@@ -280,6 +307,13 @@ def delete_item(item_id: UUID, user: CurrentUser = Depends(current_user)):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Only the creator or an admin can delete this item",
+        )
+
+    if item["status"] != "pending":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Cannot delete item — status is '{item['status']}'. "
+            "Only pending items are deletable.",
         )
 
     sb.table("items").delete().eq("id", item_id_str).execute()

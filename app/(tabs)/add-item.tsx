@@ -11,12 +11,13 @@ import { useLowStockStore } from '../../store/lowStockStore';
 
 const CATEGORIES = ['Dairy', 'Meat', 'Grains', 'Bakery', 'Pantry', 'Produce', 'Frozen', 'Drinks', 'Cleaning', 'Other'];
 const UNITS = ['units', 'kg', 'g', 'L', 'ml', 'packs', 'loaves', 'bottles', 'cans', 'bags'];
+const MAX_QTY = 9999;
 
 export default function AddItemScreen() {
   const router = useRouter();
   const { prefillName = '', lowStockFlagId = '' } = useLocalSearchParams<{ prefillName?: string; lowStockFlagId?: string }>();
   const addItem = useItemStore((s) => s.addItem);
-  const markOnList = useLowStockStore((s) => s.markOnList);
+  const deleteFlag = useLowStockStore((s) => s.deleteFlag);
 
   const [name, setName] = useState(prefillName);
   const [qty, setQty] = useState('1');
@@ -25,10 +26,11 @@ export default function AddItemScreen() {
   const [urgent, setUrgent] = useState(false);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [qtyError, setQtyError] = useState('');
 
   function resetForm() {
     setName(''); setQty('1'); setUnit('units');
-    setUrgent(false); setNotes(''); setCategory('');
+    setUrgent(false); setNotes(''); setCategory(''); setQtyError('');
   }
 
   async function handleAdd() {
@@ -36,7 +38,16 @@ export default function AddItemScreen() {
       Alert.alert('Item name required', 'Please enter the item name before adding.');
       return;
     }
-    const quantity = Math.max(0.5, parseFloat(qty) || 0.5);
+    const parsed = parseFloat(qty);
+    if (isNaN(parsed) || parsed <= 0) {
+      setQtyError('Please enter a valid quantity.');
+      return;
+    }
+    if (parsed > MAX_QTY) {
+      setQtyError(`Quantity can't exceed ${MAX_QTY}. Please enter a smaller number.`);
+      return;
+    }
+    const quantity = Math.max(0.5, parsed);
     setSubmitting(true);
     try {
       await addItem({
@@ -49,7 +60,7 @@ export default function AddItemScreen() {
       });
 
       if (lowStockFlagId) {
-        markOnList(lowStockFlagId);
+        deleteFlag(lowStockFlagId).catch(() => {});
         Alert.alert('Added to list', `"${name.trim()}" has been added to the shopping list.`, [
           { text: 'OK', onPress: () => router.back() },
         ]);
@@ -117,22 +128,22 @@ export default function AddItemScreen() {
         <View className="gap-2">
           <Text className="text-[12px] font-medium text-text-muted uppercase tracking-wider">Quantity & unit</Text>
           <View className="flex-row gap-3">
-            <View className="flex-row items-center bg-white border border-border rounded-xl overflow-hidden" style={{ width: 120 }}>
+            <View className={`flex-row items-center bg-white border rounded-xl overflow-hidden ${qtyError ? 'border-red-400' : 'border-border'}`} style={{ width: 120 }}>
               <TouchableOpacity
                 className="px-3 py-3.5 items-center justify-center"
-                onPress={() => setQty((v) => String(Math.max(0.5, Math.round((Number(v) - 0.5) * 10) / 10)))}
+                onPress={() => { setQtyError(''); setQty((v) => String(Math.max(0.5, Math.round((Number(v) - 0.5) * 10) / 10))); }}
               >
                 <Ionicons name="remove" size={18} color="#7AAA96" />
               </TouchableOpacity>
               <TextInput
                 className="flex-1 text-center text-[16px] font-medium text-text-primary"
                 value={qty}
-                onChangeText={setQty}
+                onChangeText={(v) => { setQtyError(''); setQty(v); }}
                 keyboardType="decimal-pad"
               />
               <TouchableOpacity
                 className="px-3 py-3.5 items-center justify-center"
-                onPress={() => setQty((v) => String(Math.round((Number(v) + 0.5) * 10) / 10))}
+                onPress={() => { setQtyError(''); setQty((v) => String(Math.round((Number(v) + 0.5) * 10) / 10)); }}
               >
                 <Ionicons name="add" size={18} color="#1D9E75" />
               </TouchableOpacity>
@@ -154,6 +165,9 @@ export default function AddItemScreen() {
               ))}
             </ScrollView>
           </View>
+          {qtyError ? (
+            <Text className="text-[12px] text-red-500 mt-1">{qtyError}</Text>
+          ) : null}
         </View>
 
         {/* Category */}

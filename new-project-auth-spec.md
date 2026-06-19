@@ -240,9 +240,12 @@ All paths under `/auth`. Public = no token required. Auth = bearer required.
 | POST   | `/household/members/{id}/password`  | bearer:admin | Admin resets a member's password directly. Does NOT invalidate the member's existing sessions.         |
 | PATCH  | `/household/members/{id}`           | bearer:admin | Admin updates a member's `display_name` / `email`. Email change uses `email_confirm=true` — no email sent. 400 on self-target. 404 cross-household. 409 on email conflict. |
 | DELETE | `/household/members/{id}`           | bearer:admin | Remove a family member from the household.                                                             |
-| GET    | `/me`                               | bearer       | Current user (incl. `health_preferences`) + household snapshot.                                        |
+| GET    | `/household/report-settings`        | bearer:admin | Read weekly-report schedule (`report_day` ISO 1..7, `report_time` "HH:MM" 24h, `report_timezone` IANA). |
+| PATCH  | `/household/report-settings`        | bearer:admin | Update any subset of the three fields. 422 on empty body, bad day, malformed time, or unknown IANA tz. |
+| GET    | `/me`                               | bearer       | Current user (incl. `health_preferences` + `dietary_preferences`) + household snapshot.                |
 | PATCH  | `/me/profile`                       | bearer       | Self-update of `display_name` and/or `email`. Email change uses `email_confirm=true` — no email sent. 409 on conflict. |
 | PATCH  | `/me/health-preferences`            | bearer       | Partial update of per-user health-preference toggles. Unknown keys → 422.                              |
+| PATCH  | `/me/dietary-preferences`           | bearer       | Partial update of per-user `dietary_types` / `allergies` / `dislikes`. FE sends full replacement list per key. |
 | POST   | `/low-stock`                        | bearer       | Flag an item as running low in the caller's household. 409 if the name is already flagged (any member). |
 | GET    | `/low-stock`                        | bearer       | List the caller's household low-stock flags, newest first. Includes flagger display name.              |
 | DELETE | `/low-stock/{flag_id}`              | bearer       | Clear a flag. Open to any household member. 404 cross-household.                                       |
@@ -259,12 +262,16 @@ All paths under `/auth`. Public = no token required. Auth = bearer required.
 | POST   | `/cookbook/recipes/{id}/approve`    | bearer:admin | Flip pending → approved. Idempotent (re-call on approved returns 200).                                 |
 | POST   | `/cookbook/recipes/generate`        | bearer       | Pass-through preview (no DB write). Returns `RecipePreview`. 502 on total agent failure.               |
 | POST   | `/cookbook/recipes/extract-photo`   | bearer       | Pass-through preview (no DB write). `RecipePreview.reason` populated on partial extraction.            |
-| POST   | `/meal-plan/submissions`            | bearer       | Upsert caller's week submission. Re-submitting same week replaces.                                     |
+| GET    | `/cookbook/recipes/{id}/description`| bearer       | Per-user, AI-personalized blurb. Cached per `(recipe_id, user_id)`; auto-invalidated by `recipe.updated_at`. May be `""` on agent failure. |
+| POST   | `/meal-plan/submissions`            | bearer       | Upsert caller's week submission (busy_days + meal_requests + optional `week_notes`). Re-submitting replaces; omitting `week_notes` clears it. |
 | GET    | `/meal-plan/submissions/me`         | bearer       | Caller's own submission for `?week_start=...`. 404 if not yet submitted.                               |
 | GET    | `/meal-plan/submissions/status`     | bearer       | Per-member `submitted: bool` list + counts. Booleans only; submission content not leaked.              |
 | GET    | `/meal-plan/{week_start}`           | bearer       | Plan + 7 days. 404 if no plan yet for that week.                                                       |
 | POST   | `/meal-plan/generate`               | bearer:admin | Generate / re-generate the weekly plan via AI. 502 on total agent failure (no row inserted).           |
 | PATCH  | `/meal-plan/{plan_id}/days/{day_id}`| bearer:admin | Edit one day (`meal_name`, `prep_label`, `notes`, `recipe_id`).                                        |
+| POST   | `/meal-plan/{plan_id}/finalize`     | bearer:admin | Flip `status` to `'finalized'`. Does NOT populate `/items` — FE handles shopping-list rows. Idempotent.        |
+| POST   | `/meal-plan/{plan_id}/react`        | bearer       | Upsert caller's reaction on one day. `'liked'`/`'disliked'` only. 409 if plan is `'draft'`.            |
+| GET    | `/meal-plan/{plan_id}/reactions`    | bearer       | Every household member's reactions across the 7 days of this plan.                                     |
 
 Refresh is handled by the Supabase JS SDK on the client — there is no `/auth/refresh` endpoint on the backend.
 
@@ -299,6 +306,8 @@ Server: call `sign_in_with_password` **on a fresh anon client** (never the share
 ```
 
 Mobile stores tokens in **SecureStore** (iOS Keychain / Android Keystore), **never** plain AsyncStorage.
+
+**Errors.** Every bad-credentials path — unknown email, wrong password, validation rejection from Supabase — returns `401 {"detail":"Invalid credentials"}`. The body is a **constant string**: no trailing exception text, no path-dependent variations. The underlying reason is logged server-side under the `housewise.auth` logger so we keep diagnostic visibility without leaking an enumeration signal. (Lesson from QA pass 2026-06-17 / BUG-008.)
 
 ### 7.3 Token refresh — handled by the SDK
 
@@ -423,7 +432,8 @@ Integration tests against a real Supabase project (no mocking the DB):
   - **Low-stock flags:** any household member can create/list/delete low-stock flags (`/low-stock/*`). One flag per name per household — re-flagging an already-flagged name (by anyone) → 409. Delete is open to every member, not just the creator, since the panel is a shared shopping signal.
   - **Stores:** admin-managed, family-readable. Admin creates/updates/deletes stores (`POST/PATCH/DELETE /stores`); any household member can `GET /stores`. One store per name per household (case-insensitive). URLs are normalized (`carrefour.ae` → `https://carrefour.ae/`).
   - **Cookbook recipes:** the two AI endpoints (`/recipes/generate`, `/recipes/extract-photo`) are **pass-through previews** — they return a `RecipePreview` shape without writing anything. The single save endpoint `POST /cookbook/recipes` accepts a `source` field (`manual` / `ai_generated` / `photo`) and persists one row. Status is set by caller role, not by `source`: admin → `approved`, family → `pending`. Family submissions require an admin `POST /cookbook/recipes/{id}/approve` before family-wide visibility. The submitter sees their own pending row; other family members do not.
-  - **Meal plan:** any household member can submit their week (busy days + meal requests) and read the resulting plan; only admin can call `POST /meal-plan/generate` or edit a day. The agent's output replaces any existing draft for that week (delete-then-insert of the 7 day rows). Total agent failure → **502, no row inserted** (same write-vs-pass-through split as cookbook). Finalize / shopping-list auto-pop / prices / reactions are **deferred** — their UIs don't exist yet.
+  - **Meal plan:** any household member can submit their week (busy days + meal requests) and read the resulting plan; only admin can `POST /meal-plan/generate`, edit a day, or `POST /meal-plan/{plan_id}/finalize`. The agent's output replaces any existing draft for that week (delete-then-insert of the 7 day rows). Total agent failure → **502, no row inserted** (same write-vs-pass-through split as cookbook). Finalize is idempotent and only flips `status` to `'finalized'` — the FE owns shopping-list population (reads the plan's days and pushes whichever ingredients it picks into `/items` itself). **Per-day reactions** (thumbs-up / thumbs-down) live on `POST /meal-plan/{plan_id}/react` (finalized plans only, 409 on draft); reactions feed back into the next week's agent context as `recent_reactions` per member (28-day window). Reactions key on `meal_plan_days.id`, not `recipes.id`, so agent-invented meals are reactable too. **Personalized recipe descriptions** at `GET /cookbook/recipes/{id}/description` use the same reaction history; cached per `(recipe_id, user_id)` and auto-invalidated by `recipe.updated_at`. Price search still **deferred** (no UI).
+  - **Report settings:** admin sets when the household's weekly shopping report is emailed via `GET/PATCH /household/report-settings`. Three fields, all NOT NULL with DB-level defaults (`report_day=7`/Sun, `report_time='09:00'`, `report_timezone='UTC'`). Timezone is an IANA name validated server-side via `zoneinfo`; FE sources it from `Intl.DateTimeFormat().resolvedOptions().timeZone`. The actual cron / email sending is **deferred** — this PR only stores the schedule. Recipient address is the admin's login email; no separate field.
 - Do you want admins to be able to **transfer ownership** of a household? (Out of scope for v1 unless you say otherwise.)
 - Do you want **soft-delete** of family members (keep history) or hard-delete? Spec assumes hard-delete via `on delete cascade`.
 - Followup: today `_admin_household_id` reads role from `public.users`, not the JWT. Combined with the 0003 `with check`, the privilege escalation is closed. Worth refactoring role checks to read exclusively from the signed JWT.

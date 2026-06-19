@@ -191,3 +191,23 @@ def test_delete_non_uuid_returns_422(client, created_users):
         headers={"Authorization": f"Bearer {admin['access_token']}"},
     )
     assert r.status_code == 422
+
+
+# ---------- BUG-004: trim name + reject empty after trim (FR-012) ----------
+
+
+def test_create_low_stock_whitespace_only_name_rejected(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = _flag(client, admin["access_token"], "   ")
+    assert r.status_code == 422, r.text
+
+
+def test_create_low_stock_trims_name(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = _flag(client, admin["access_token"], "  Bread  ")
+    assert r.status_code == 201, r.text
+    assert r.json()["name"] == "Bread"
+
+    # Follow-up: same trimmed value now collides with the unique constraint.
+    dup = _flag(client, admin["access_token"], "Bread")
+    assert dup.status_code == 409, dup.text

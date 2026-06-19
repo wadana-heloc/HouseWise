@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
@@ -7,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 # These imports resolve via the sys.path shim in backend/app/main.py.
 # They are imported at module load so the server fails fast if the AI
 # team breaks any of these function signatures.
-from cookbook_agent import generate_recipe, personalize_recipe_description  # noqa: F401
+from cookbook_agent import generate_recipe, personalize_recipe_description
 from recipe_photo_agent import extract_recipe_from_image
 
 from ..auth.deps import CurrentUser, current_user, require_role
@@ -16,6 +17,7 @@ from ..supabase_client import get_supabase
 from .schemas import (
     ExtractPhotoRequest,
     GenerateRecipeRequest,
+    PersonalizedDescription,
     RecipeCreate,
     RecipeList,
     RecipeOut,
@@ -24,6 +26,10 @@ from .schemas import (
     RecipeStatus,
     RecipeUpdate,
 )
+
+# Last N reactions to feed `personalize_recipe_description` as `recent_history`.
+# The agent's prompt is bounded; 5 is enough signal without bloating the call.
+_DESCRIPTION_HISTORY_LIMIT = 5
 
 router = APIRouter(prefix="/cookbook", tags=["cookbook"])
 
@@ -169,6 +175,7 @@ def create_recipe(body: RecipeCreate, user: CurrentUser = Depends(current_user))
         "household_id": household_id,
         "name": body.name,
         "description": body.description,
+        "story": body.story,
         "ingredients": [ing.model_dump() for ing in body.ingredients],
         "instructions": body.instructions,
         "tags": body.tags,
@@ -202,25 +209,43 @@ def get_recipe(recipe_id: UUID, user: CurrentUser = Depends(current_user)):
 @router.patch(
     "/recipes/{recipe_id}",
     response_model=RecipeOut,
-    summary="Admin edits a recipe",
+    summary="Admin or creator edits a recipe",
 )
 def update_recipe(
     recipe_id: UUID,
     body: RecipeUpdate,
-    admin: CurrentUser = Depends(require_role("admin")),
+    user: CurrentUser = Depends(current_user),
 ):
-    """Admin patches any non-id field, including `status` if needed.
+    """Patch any non-id field on a recipe. Two callers allowed:
 
-    Errors: 401 missing/invalid bearer. 403 caller is not admin / not in a
-    household. 404 recipe not in caller's household. 422 empty body, bad
-    enum, or `recipe_id` is not a UUID.
+    - **Admin** — full edit including `status`.
+    - **Creator** (`recipe.submitted_by == caller.id`) — any field except
+      `status`. Works at any status (pending or approved). Edits go live
+      without admin re-review.
+
+    Cross-household PATCHes return 404 (not 403) so existence isn't leaked.
+
+    Errors: 401 missing/invalid bearer. 403 caller is not admin and not the
+    creator, or non-admin attempted to change `status`. 404 recipe not in
+    caller's household. 422 empty body, bad enum, or `recipe_id` not a UUID.
     """
     sb = get_supabase()
-    household_id, role = _caller_household(sb, admin.id)
+    household_id, role = _caller_household(sb, user.id)
     recipe_id_str = str(recipe_id)
-    _fetch_recipe_for_caller(sb, recipe_id_str, household_id, admin.id, role)
+    recipe = _fetch_recipe_for_caller(sb, recipe_id_str, household_id, user.id, role)
+
+    if role != "admin" and recipe.get("submitted_by") != user.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only the recipe creator or an admin may edit",
+        )
 
     patch: dict = body.model_dump(exclude_unset=True)
+    if role != "admin" and "status" in patch:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only admins can change a recipe's status",
+        )
     if "ingredients" in patch and patch["ingredients"] is not None:
         patch["ingredients"] = [
             (ing if isinstance(ing, dict) else ing.model_dump())
@@ -228,7 +253,7 @@ def update_recipe(
         ]
 
     sb.table("recipes").update(patch).eq("id", recipe_id_str).execute()
-    return _fetch_recipe_for_caller(sb, recipe_id_str, household_id, admin.id, role)
+    return _fetch_recipe_for_caller(sb, recipe_id_str, household_id, user.id, role)
 
 
 @router.delete(
@@ -372,3 +397,151 @@ async def extract_photo(body: ExtractPhotoRequest, user: CurrentUser = Depends(c
         source="photo",
         reason=result.get("reason"),
     )
+
+
+# ---------- Personalized description (per-user cache) ----------
+
+
+def _recent_history_for_user(sb, user_id: str) -> list[dict[str, Any]]:
+    """Last N reactions by this user, shaped for `personalize_recipe_description`.
+
+    Returns `[{recipe_name, eaten_on, reaction}, ...]`. `recipe_name` is the
+    `meal_plan_days.meal_name` (works for both cookbook recipes and agent-
+    invented meals). `eaten_on` is the plan's `week_start` ISO date — the
+    agent doesn't need day-precision for this signal.
+    """
+    recent = (
+        sb.table("meal_plan_day_reactions")
+        .select("day_id, reaction")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .limit(_DESCRIPTION_HISTORY_LIMIT)
+        .execute()
+        .data
+    ) or []
+    if not recent:
+        return []
+
+    day_ids = [r["day_id"] for r in recent]
+    days = (
+        sb.table("meal_plan_days")
+        .select("id, plan_id, meal_name")
+        .in_("id", day_ids)
+        .execute()
+        .data
+    ) or []
+    day_by_id = {d["id"]: d for d in days}
+
+    plan_ids = list({d["plan_id"] for d in days})
+    plans = (
+        sb.table("meal_plans")
+        .select("id, week_start")
+        .in_("id", plan_ids)
+        .execute()
+        .data
+    ) or []
+    week_by_plan = {p["id"]: p["week_start"] for p in plans}
+
+    out: list[dict[str, Any]] = []
+    for r in recent:
+        d = day_by_id.get(r["day_id"])
+        if not d:
+            continue
+        out.append({
+            "recipe_name": d["meal_name"],
+            "eaten_on": week_by_plan.get(d["plan_id"]),
+            "reaction": r["reaction"],
+        })
+    return out
+
+
+def _parse_ts(ts: Any) -> datetime:
+    """Parse a Postgres timestamptz string into a timezone-aware datetime."""
+    if isinstance(ts, datetime):
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    s = str(ts).replace("Z", "+00:00")
+    return datetime.fromisoformat(s)
+
+
+@router.get(
+    "/recipes/{recipe_id}/description",
+    response_model=PersonalizedDescription,
+    summary="Per-user, AI-generated personalized recipe description (cached)",
+)
+async def get_personalized_description(
+    recipe_id: UUID, user: CurrentUser = Depends(current_user),
+):
+    """Return a personalized blurb for this recipe, tailored to the caller's
+    profile and recent eating history.
+
+    Cached per `(recipe_id, user_id)` in
+    `public.recipe_personalized_descriptions`. Cache is invalidated automatically
+    when the recipe's `updated_at` advances past the cached row's `generated_at`
+    — admin editing a recipe forces every household member's next read to
+    regenerate.
+
+    The agent can return an empty string (its documented failure shape); we
+    still cache that so a busted recipe doesn't hammer Claude on every read.
+    FE should render the recipe without the blurb when `description == ""`.
+
+    Errors: 401 missing/invalid bearer. 403 caller not in a household.
+    404 recipe not in caller's household, or pending and not own/admin.
+    422 `recipe_id` not a UUID.
+    """
+    sb = get_supabase()
+    household_id, role = _caller_household(sb, user.id)
+    recipe_id_s = str(recipe_id)
+    recipe = _fetch_recipe_for_caller(sb, recipe_id_s, household_id, user.id, role)
+
+    cached = (
+        sb.table("recipe_personalized_descriptions")
+        .select("description, generated_at")
+        .eq("recipe_id", recipe_id_s)
+        .eq("user_id", user.id)
+        .execute()
+        .data
+    ) or []
+    if cached:
+        if _parse_ts(cached[0]["generated_at"]) >= _parse_ts(recipe["updated_at"]):
+            return PersonalizedDescription(
+                description=cached[0]["description"],
+                generated_at=_parse_ts(cached[0]["generated_at"]),
+            )
+
+    user_row = (
+        sb.table("users")
+        .select("display_name, health_preferences, dietary_preferences")
+        .eq("id", user.id)
+        .single()
+        .execute()
+        .data
+    ) or {}
+    member_profile = {
+        "display_name": user_row.get("display_name"),
+        "age_group": None,
+        "taste_preferences": None,
+        "health_preferences": user_row.get("health_preferences") or {},
+        "dietary_preferences": user_row.get("dietary_preferences") or {
+            "dietary_types": [], "allergies": [], "dislikes": [],
+        },
+    }
+    recent_history = _recent_history_for_user(sb, user.id)
+
+    description = await run_in_threadpool(
+        personalize_recipe_description, recipe, member_profile, recent_history,
+    )
+    if not isinstance(description, str):
+        description = ""
+
+    generated_at = datetime.now(tz=timezone.utc)
+    sb.table("recipe_personalized_descriptions").upsert(
+        {
+            "recipe_id": recipe_id_s,
+            "user_id": user.id,
+            "description": description,
+            "generated_at": generated_at.isoformat(),
+        },
+        on_conflict="recipe_id,user_id",
+    ).execute()
+
+    return PersonalizedDescription(description=description, generated_at=generated_at)

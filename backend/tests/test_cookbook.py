@@ -262,7 +262,8 @@ def test_admin_patches_name(client, created_users):
     assert r.json()["name"] == "Renamed"
 
 
-def test_family_cannot_patch(client, created_users):
+def test_family_cannot_edit_another_members_recipe(client, created_users):
+    """Family member B cannot PATCH a recipe submitted by family A (or admin)."""
     admin = _signup_admin(client, created_users)
     rid = _post(client, admin["access_token"]).json()["id"]
     member = _create_member(client, admin["access_token"], created_users)
@@ -273,6 +274,94 @@ def test_family_cannot_patch(client, created_users):
         json={"name": "Nope"},
     )
     assert r.status_code == 403
+
+
+def test_family_can_edit_own_pending_recipe(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, member)
+
+    rid = _post(client, fam_token).json()["id"]
+    r = client.patch(
+        f"/cookbook/recipes/{rid}",
+        headers={"Authorization": f"Bearer {fam_token}"},
+        json={"name": "Renamed by creator", "story": "Family story."},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Renamed by creator"
+    assert r.json()["story"] == "Family story."
+    assert r.json()["status"] == "pending"
+
+
+def test_family_can_edit_own_approved_recipe(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, member)
+
+    rid = _post(client, fam_token).json()["id"]
+    # Admin approves
+    r = client.post(
+        f"/cookbook/recipes/{rid}/approve",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "approved"
+
+    # Creator can still edit after approval
+    r = client.patch(
+        f"/cookbook/recipes/{rid}",
+        headers={"Authorization": f"Bearer {fam_token}"},
+        json={"name": "Edited after approval"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Edited after approval"
+    assert r.json()["status"] == "approved"
+
+
+def test_family_cannot_change_status_via_patch(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, member)
+
+    rid = _post(client, fam_token).json()["id"]
+    r = client.patch(
+        f"/cookbook/recipes/{rid}",
+        headers={"Authorization": f"Bearer {fam_token}"},
+        json={"status": "approved"},
+    )
+    assert r.status_code == 403, r.text
+    assert "status" in r.json()["detail"].lower()
+
+
+def test_admin_can_still_edit_any_recipe(client, created_users):
+    """Regression check — admin retains full edit access on family submissions."""
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, member)
+
+    rid = _post(client, fam_token).json()["id"]
+    r = client.patch(
+        f"/cookbook/recipes/{rid}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"name": "Admin-edited"},
+    )
+    assert r.status_code == 200
+    assert r.json()["name"] == "Admin-edited"
+
+
+def test_admin_can_still_change_status_via_patch(client, created_users):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users)
+    fam_token = _member_token(client, member)
+
+    rid = _post(client, fam_token).json()["id"]
+    r = client.patch(
+        f"/cookbook/recipes/{rid}",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+        json={"status": "approved"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "approved"
 
 
 def test_admin_deletes_recipe(client, created_users):
@@ -539,3 +628,218 @@ def test_extract_photo_total_failure_returns_502(client, sb, created_users, patc
         .execute()
     )
     assert (after.count or 0) == (before.count or 0)
+
+
+# ---------- Personalized description ----------
+
+
+@pytest.fixture
+def patch_personalize(monkeypatch):
+    """Mock `personalize_recipe_description` at the router's import site.
+
+    Module-level `from cookbook_agent import personalize_recipe_description`
+    means we have to patch the captured reference in app.cookbook.router,
+    not the source module.
+    """
+    holder = {"return": "Default personalized blurb"}
+    calls: list = []
+
+    def fake(recipe, member_profile, recent_history):
+        calls.append({
+            "recipe": recipe,
+            "member_profile": member_profile,
+            "recent_history": recent_history,
+        })
+        v = holder["return"]
+        return v(recipe, member_profile, recent_history) if callable(v) else v
+
+    monkeypatch.setattr("app.cookbook.router.personalize_recipe_description", fake)
+
+    def set_return(value):
+        holder["return"] = value
+
+    return type("H", (), {"set": staticmethod(set_return), "calls": calls})
+
+
+def test_description_first_call_invokes_agent_and_caches(
+    client, sb, created_users, patch_personalize
+):
+    admin = _signup_admin(client, created_users)
+    rid = _post(client, admin["access_token"]).json()["id"]
+    patch_personalize.set("Personalized blurb")
+
+    r = client.get(
+        f"/cookbook/recipes/{rid}/description",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["description"] == "Personalized blurb"
+    assert body["generated_at"]
+    assert len(patch_personalize.calls) == 1
+
+    cached = (
+        sb.table("recipe_personalized_descriptions")
+        .select("description")
+        .eq("recipe_id", rid)
+        .eq("user_id", admin["user_id"])
+        .execute()
+        .data
+    )
+    assert cached and cached[0]["description"] == "Personalized blurb"
+
+
+def test_description_cache_hit_skips_agent(client, created_users, patch_personalize):
+    admin = _signup_admin(client, created_users)
+    rid = _post(client, admin["access_token"]).json()["id"]
+    patch_personalize.set("First")
+
+    client.get(
+        f"/cookbook/recipes/{rid}/description",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert len(patch_personalize.calls) == 1
+
+    patch_personalize.set("Second (should NOT be called)")
+    r = client.get(
+        f"/cookbook/recipes/{rid}/description",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["description"] == "First"
+    assert len(patch_personalize.calls) == 1, "Cache hit must not invoke the agent"
+
+
+def test_description_stale_cache_regenerates(client, created_users, patch_personalize):
+    admin = _signup_admin(client, created_users)
+    tok = admin["access_token"]
+    rid = _post(client, tok).json()["id"]
+    patch_personalize.set("Old")
+    client.get(
+        f"/cookbook/recipes/{rid}/description",
+        headers={"Authorization": f"Bearer {tok}"},
+    )
+
+    client.patch(
+        f"/cookbook/recipes/{rid}",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"name": "Renamed for staleness test"},
+    )
+
+    patch_personalize.set("Fresh")
+    r = client.get(
+        f"/cookbook/recipes/{rid}/description",
+        headers={"Authorization": f"Bearer {tok}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["description"] == "Fresh"
+    assert len(patch_personalize.calls) == 2
+
+
+def test_description_per_user(client, sb, created_users, patch_personalize):
+    admin = _signup_admin(client, created_users)
+    member = _create_member(client, admin["access_token"], created_users, display_name="Maha")
+    fam_tok = _member_token(client, member)
+    rid = _post(client, admin["access_token"]).json()["id"]
+
+    def per_user(recipe, member_profile, recent_history):
+        return f"For {member_profile['display_name']}"
+
+    patch_personalize.set(per_user)
+
+    admin_resp = client.get(
+        f"/cookbook/recipes/{rid}/description",
+        headers={"Authorization": f"Bearer {admin['access_token']}"},
+    ).json()
+    fam_resp = client.get(
+        f"/cookbook/recipes/{rid}/description",
+        headers={"Authorization": f"Bearer {fam_tok}"},
+    ).json()
+
+    assert admin_resp["description"] == "For Admin"
+    assert fam_resp["description"] == "For Maha"
+
+    rows = (
+        sb.table("recipe_personalized_descriptions")
+        .select("user_id")
+        .eq("recipe_id", rid)
+        .execute()
+        .data
+    )
+    user_ids = {row["user_id"] for row in rows}
+    assert admin["user_id"] in user_ids and member["user_id"] in user_ids
+
+
+def test_description_cross_household_404(client, sb, created_users, patch_personalize):
+    a1 = _signup_admin(client, created_users, household_name="H1")
+    a2 = _signup_admin(client, created_users, household_name="H2")
+    rid = _post(client, a1["access_token"]).json()["id"]
+
+    r = client.get(
+        f"/cookbook/recipes/{rid}/description",
+        headers={"Authorization": f"Bearer {a2['access_token']}"},
+    )
+    assert r.status_code == 404
+    assert len(patch_personalize.calls) == 0
+    rows = (
+        sb.table("recipe_personalized_descriptions")
+        .select("id", count="exact")
+        .eq("recipe_id", rid)
+        .execute()
+    )
+    assert (rows.count or 0) == 0
+
+
+# ---------- Recipe story (migration 0014) ----------
+
+
+def test_create_recipe_with_story(client, created_users):
+    admin = _signup_admin(client, created_users)
+    payload = _basic_recipe_payload(story="My grandmother made this every Sunday.")
+    r = _post(client, admin["access_token"], payload)
+    assert r.status_code == 201, r.text
+    assert r.json()["story"] == "My grandmother made this every Sunday."
+
+
+def test_create_recipe_without_story_defaults_null(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = _post(client, admin["access_token"])
+    assert r.status_code == 201, r.text
+    assert r.json()["story"] is None
+
+
+def test_create_recipe_empty_story_rejected(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = _post(client, admin["access_token"], _basic_recipe_payload(story=""))
+    assert r.status_code == 422, r.text
+
+
+def test_create_recipe_oversized_story_rejected(client, created_users):
+    admin = _signup_admin(client, created_users)
+    r = _post(client, admin["access_token"], _basic_recipe_payload(story="x" * 5001))
+    assert r.status_code == 422, r.text
+
+
+def test_patch_recipe_set_story(client, created_users):
+    admin = _signup_admin(client, created_users)
+    rid = _post(client, admin["access_token"]).json()["id"]
+    hdr = {"Authorization": f"Bearer {admin['access_token']}"}
+
+    r = client.patch(f"/cookbook/recipes/{rid}", headers=hdr, json={"story": "new story"})
+    assert r.status_code == 200, r.text
+    assert r.json()["story"] == "new story"
+
+    g = client.get(f"/cookbook/recipes/{rid}", headers=hdr)
+    assert g.json()["story"] == "new story"
+
+
+def test_patch_recipe_clear_story(client, created_users):
+    admin = _signup_admin(client, created_users)
+    rid = _post(
+        client, admin["access_token"], _basic_recipe_payload(story="initial"),
+    ).json()["id"]
+    hdr = {"Authorization": f"Bearer {admin['access_token']}"}
+
+    r = client.patch(f"/cookbook/recipes/{rid}", headers=hdr, json={"story": None})
+    assert r.status_code == 200, r.text
+    assert r.json()["story"] is None

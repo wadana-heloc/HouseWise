@@ -31,6 +31,7 @@ export default function ProfileScreen() {
         { icon: 'people-outline',     label: 'Members',            route: '/family-members' },
         { icon: 'storefront-outline', label: 'Preferred stores',   route: '/preferred-stores' },
         { icon: 'heart-outline',      label: 'Health preferences', route: '/health-preferences' },
+        { icon: 'restaurant-outline', label: 'Dietary preferences', route: '/dietary-preferences' },
       ],
     },
     {
@@ -43,7 +44,7 @@ export default function ProfileScreen() {
     {
       title: 'Account',
       items: [
-        { icon: 'mail-outline',          label: 'Report email',    route: '/report-email' },
+        { icon: 'mail-outline',          label: 'Report settings', route: '/report-email' },
         {
           icon: 'notifications-outline',
           label: 'Notifications',

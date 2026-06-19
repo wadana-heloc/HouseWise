@@ -91,6 +91,11 @@ supabase/
     0007_init_stores.sql                     # stores table + unique (household, lower(name)) + RLS
     0008_init_cookbook.sql                   # recipes table + recipe_source/recipe_status enums + RLS
     0009_init_meal_plan.sql                  # meal_plan_submissions + meal_plans + meal_plan_days + meal_plan_status/prep_label enums + RLS
+    0010_dietary_prefs_and_week_notes.sql    # users.dietary_preferences jsonb + meal_plan_submissions.week_notes text
+    0011_meal_plan_day_reactions.sql         # meal_plan_day_reactions table + meal_plan_reaction enum
+    0012_recipe_personalized_descriptions.sql # recipe_personalized_descriptions cache (per-user RLS)
+    0013_household_report_settings.sql       # households.report_day / report_time / report_timezone (admin-only weekly shopping report schedule)
+    0014_recipe_story.sql                    # recipes.story text (nullable, 1..5000 chars; manually authored narrative)
 
 docs/
   auth-flow.md         # runtime sequences, SDK refresh, failure modes

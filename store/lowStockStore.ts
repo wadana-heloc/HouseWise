@@ -4,18 +4,15 @@ import type { LowStockFlag } from '../services/lowStock';
 
 interface LowStockState {
   flags: LowStockFlag[];
-  onListFlagIds: string[];
   loading: boolean;
   error: string | null;
   fetchFlags: () => Promise<void>;
   addFlag: (name: string) => Promise<void>;
   deleteFlag: (flagId: string) => Promise<void>;
-  markOnList: (flagId: string) => void;
 }
 
 export const useLowStockStore = create<LowStockState>((set, get) => ({
   flags: [],
-  onListFlagIds: [],
   loading: false,
   error: null,
 
@@ -49,7 +46,5 @@ export const useLowStockStore = create<LowStockState>((set, get) => ({
     }
   },
 
-  markOnList(flagId) {
-    set((state) => ({ onListFlagIds: [...state.onListFlagIds, flagId] }));
-  },
-}));
+}))
+;

@@ -1,0 +1,64 @@
+# Build the backend image and deploy a new Cloud Run revision.
+# Wired to a Cloud Build trigger on push to main. Override _REGION / _SERVICE /
+# _REPO / _RUNTIME_SA in the trigger's substitutions.
+substitutions:
+  _REGION: me-central1
+  _SERVICE: housewise-backend
+  _REPO: housewise            # Artifact Registry repo name
+  _RUNTIME_SA: housewise-run@${PROJECT_ID}.iam.gserviceaccount.com
+  # Non-secret runtime config. Override these in the trigger's substitutions —
+  # the placeholders below deploy a non-working service on purpose so a
+  # misconfigured trigger is obvious. Secrets come from Secret Manager, not here.
+  _SUPABASE_URL: https://CHANGE-ME.supabase.co
+  _SUPABASE_JWKS_URL: https://CHANGE-ME.supabase.co/auth/v1/.well-known/jwks.json
+  _SUPABASE_JWT_ISSUER: https://CHANGE-ME.supabase.co/auth/v1
+  _APP_DEEP_LINK: myapp://auth/callback
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:latest
+      - .
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --service-account=${_RUNTIME_SA}
+      - --memory=4Gi
+      - --cpu=2
+      - --min-instances=1
+      - --max-instances=4
+      - --cpu-boost
+      - --timeout=120
+      - --port=8080
+      - --allow-unauthenticated
+      - --set-env-vars=SUPABASE_URL=${_SUPABASE_URL},SUPABASE_JWKS_URL=${_SUPABASE_JWKS_URL},SUPABASE_JWT_ISSUER=${_SUPABASE_JWT_ISSUER},SUPABASE_JWT_AUDIENCE=authenticated,APP_DEEP_LINK=${_APP_DEEP_LINK}
+      - --set-secrets=SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,SUPABASE_ANON_KEY=SUPABASE_ANON_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8     # torch image build is heavy; default machine is slow.
+timeout: 2400s

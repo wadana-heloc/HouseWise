@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import * as authService from '../services/auth';
 import type { SignupParams } from '../services/auth';
-import type { HealthPreferences } from '../services/profile';
+import type { HealthPreferences, DietaryPreferences } from '../services/profile';
 
 interface AuthState {
   isAuthenticated: boolean;
@@ -10,11 +10,13 @@ interface AuthState {
   userId: string | null;
   email: string | null;
   healthPreferences: HealthPreferences | null;
+  dietaryPreferences: DietaryPreferences | null;
   restore: (role: string | null, displayName: string | null, userId: string | null) => void;
   login: (email: string, password: string) => Promise<string>;
   signup: (params: SignupParams) => Promise<void>;
   logout: () => Promise<void>;
   setHealthPreferences: (prefs: HealthPreferences) => void;
+  setDietaryPreferences: (prefs: DietaryPreferences) => void;
   setProfile: (displayName: string, email: string) => void;
 }
 
@@ -25,6 +27,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   userId: null,
   email: null,
   healthPreferences: null,
+  dietaryPreferences: null,
 
   restore(role, displayName, userId) {
     set({ isAuthenticated: true, role, displayName, userId });
@@ -46,11 +49,15 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   async logout() {
     await authService.logout();
-    set({ isAuthenticated: false, role: null, displayName: null, email: null, healthPreferences: null });
+    set({ isAuthenticated: false, role: null, displayName: null, email: null, healthPreferences: null, dietaryPreferences: null });
   },
 
   setHealthPreferences(prefs) {
     set({ healthPreferences: prefs });
+  },
+
+  setDietaryPreferences(prefs) {
+    set({ dietaryPreferences: prefs });
   },
 
   setProfile(displayName, email) {

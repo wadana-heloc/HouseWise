@@ -3,6 +3,7 @@ from typing import Optional
 
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     HttpUrl,
     TypeAdapter,
@@ -39,6 +40,8 @@ def _normalize_url(value: str) -> str:
 
 
 class StoreCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=120)
     url: str = Field(min_length=1, max_length=500)
 
@@ -49,6 +52,8 @@ class StoreCreate(BaseModel):
 
 
 class StoreUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: Optional[str] = Field(default=None, min_length=1, max_length=120)
     url: Optional[str] = Field(default=None, min_length=1, max_length=500)
 

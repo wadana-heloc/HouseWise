@@ -26,9 +26,9 @@ Adding an item from a product photo is a **separate pass-through endpoint** that
 | POST | `/items` | any member | `ItemCreate` | Add an item. Server sets `status='pending'` and `added_by=caller`. |
 | GET | `/items` | any member | — | List the caller's household items. Filters: `status`, `urgent`, `category`, `added_by`. Order: `urgent desc, created_at desc`. |
 | GET | `/items/{id}` | any member | — | Fetch one. 404 if not in caller's household. |
-| PATCH | `/items/{id}` | any member | `ItemUpdate` (≥ 1 field) | Update any non-status field. |
+| PATCH | `/items/{id}` | creator or admin | `ItemUpdate` (≥ 1 field) | Update any non-status field. **Only allowed when `status='pending'`** (FR-017); non-pending → 409 for everyone (admin included). |
 | POST | `/items/{id}/status` | depends (see matrix) | `ItemStatusUpdate` | Transition `status`. Validated by the rules below. |
-| DELETE | `/items/{id}` | creator or admin | — | Permanent delete. |
+| DELETE | `/items/{id}` | creator or admin | — | Permanent delete. **Only allowed when `status='pending'`** (FR-018); non-pending → 409 for everyone. |
 
 ---
 
@@ -37,14 +37,19 @@ Adding an item from a product photo is a **separate pass-through endpoint** that
 | Action | admin | family (creator) | family (non-creator) |
 | --- | :---: | :---: | :---: |
 | Create item | ✓ | ✓ | ✓ |
-| List / get / patch any item in household | ✓ | ✓ | ✓ |
+| List / get any item in household | ✓ | ✓ | ✓ |
+| **PATCH (non-status fields), while `status='pending'`** | ✓ | ✓ | ✗ (403) |
+| **PATCH non-pending item (any field)** | ✗ (409) | ✗ (409) | ✗ (409) |
 | Mark `done` | ✓ | ✓ | ✓ |
 | Undo `done → pending` | ✓ | ✓ | ✓ |
 | Set `in_review`, `approved`, `rejected` | ✓ | ✗ (403) | ✗ (403) |
 | Reopen `rejected → pending` | ✓ | ✗ (403) | ✗ (403) |
-| Delete | ✓ | ✓ | ✗ (403) |
+| **DELETE, while `status='pending'`** | ✓ | ✓ | ✗ (403) |
+| **DELETE non-pending item** | ✗ (409) | ✗ (409) | ✗ (409) |
 
 Cross-household access is always **404** (not 403) so existence isn't leaked.
+
+**Why no admin carve-out on the status gate?** FR-017 says "Edit is blocked for approved or purchased items" with no admin exception. To edit a non-pending item, admin must first move it back to `pending` via `POST /items/{id}/status`, edit, then move it forward again.
 
 ---
 
@@ -123,6 +128,9 @@ Caller                    Backend                       Supabase
 | 422 on `quantity <= 0` | `gt=0` constraint on the Decimal field | [items/schemas.py](../backend/app/items/schemas.py). |
 | 403 "Caller is not in a household" | Authenticated user with no `household_id` row (shouldn't happen post-signup) | [items/router.py](../backend/app/items/router.py) `_user_household`. |
 | 403 on status transition | Family attempted an admin-only transition (`in_review` / `approved` / `rejected` / `rejected→pending`) | [items/router.py](../backend/app/items/router.py) `_check_transition`. |
-| 403 on DELETE | Non-admin, non-creator family member tried to delete | [items/router.py](../backend/app/items/router.py) `delete_item`. |
+| 403 on PATCH | Non-admin, non-creator family member tried to edit someone else's item (FR-017) | [items/router.py](../backend/app/items/router.py) `update_item`. |
+| 403 on DELETE | Non-admin, non-creator family member tried to delete (FR-018) | [items/router.py](../backend/app/items/router.py) `delete_item`. |
+| **409 on PATCH** | Item is not in `status='pending'` — edit blocked for everyone, admin included (FR-017). Admin must `POST /items/{id}/status` back to `pending` first. | [items/router.py](../backend/app/items/router.py) `update_item`. |
+| **409 on DELETE** | Item is not in `status='pending'` — delete blocked for everyone, admin included (FR-018). | [items/router.py](../backend/app/items/router.py) `delete_item`. |
 | 404 on any read/write | Item not in caller's household (or doesn't exist) | [items/router.py](../backend/app/items/router.py) `_fetch_item_in_household`. |
 | 400 invalid status transition | `<from> -> <to>` not in the allowed set (e.g. `done -> approved`) | [items/router.py](../backend/app/items/router.py) `_check_transition`. |

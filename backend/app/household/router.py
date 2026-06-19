@@ -11,10 +11,13 @@ from .schemas import (
     CreateMemberResponse,
     MemberListResponse,
     MemberRow,
+    ReportSettings,
+    ReportSettingsUpdate,
     UpdateMemberRequest,
 )
 
 router = APIRouter(prefix="/household/members", tags=["household"])
+report_router = APIRouter(prefix="/household/report-settings", tags=["household"])
 
 
 def _admin_household_id(sb, admin_id: str) -> str:
@@ -202,8 +205,8 @@ def admin_reset_member_password(
             "Admins use /auth/password-update for their own password",
         )
 
-    member = sb.table("users").select("household_id").eq("id", member_id).single().execute()
-    if not member.data or member.data.get("household_id") != household_id:
+    member = sb.table("users").select("household_id").eq("id", member_id).execute()
+    if not member.data or member.data[0].get("household_id") != household_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Member not in your household")
 
     # Note: this does NOT invalidate the member's existing access/refresh tokens.
@@ -319,11 +322,78 @@ def remove_member(member_id: str, admin: CurrentUser = Depends(require_role("adm
     if member_id == admin.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Admin cannot remove themselves")
 
-    member = sb.table("users").select("household_id, role").eq("id", member_id).single().execute()
-    if not member.data or member.data.get("household_id") != household_id:
+    member = sb.table("users").select("household_id, role").eq("id", member_id).execute()
+    if not member.data or member.data[0].get("household_id") != household_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Member not in your household")
-    if member.data.get("role") == "admin":
+    if member.data[0].get("role") == "admin":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot remove the household admin")
 
     sb.auth.admin.delete_user(member_id)
     return OkResponse()
+
+
+# ---------- Report settings (admin-only) ----------
+
+
+def _fetch_report_settings(sb, household_id: str) -> ReportSettings:
+    row = (
+        sb.table("households")
+        .select("report_day, report_time, report_timezone")
+        .eq("id", household_id)
+        .single()
+        .execute()
+    )
+    if not row.data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Household not found")
+    return ReportSettings(**row.data)
+
+
+@report_router.get(
+    "",
+    response_model=ReportSettings,
+    summary="Read the household's weekly report schedule",
+)
+def get_report_settings(admin: CurrentUser = Depends(require_role("admin"))):
+    """Return the day, time, and timezone the weekly shopping report is
+    scheduled for. Defaults are seeded at the DB level (`day=7 (Sunday)`,
+    `time='09:00'`, `timezone='UTC'`), so the response is always fully
+    populated even for a fresh household that's never PATCHed these
+    settings.
+
+    Errors: 401 missing/invalid bearer. 403 caller is not an admin /
+    not in a household.
+    """
+    sb = get_supabase()
+    household_id = _admin_household_id(sb, admin.id)
+    return _fetch_report_settings(sb, household_id)
+
+
+@report_router.patch(
+    "",
+    response_model=ReportSettings,
+    summary="Update the household's weekly report schedule",
+)
+def patch_report_settings(
+    body: ReportSettingsUpdate,
+    admin: CurrentUser = Depends(require_role("admin")),
+):
+    """Partial update of `report_day`, `report_time`, and/or
+    `report_timezone`. Fields omitted from the body are left unchanged.
+    Returns the full updated settings.
+
+    `report_timezone` must be a valid IANA name (e.g. `Asia/Beirut`); the
+    FE supplies it from `Intl.DateTimeFormat().resolvedOptions().timeZone`
+    on first save.
+
+    Errors: 401 missing/invalid bearer. 403 caller is not an admin / not
+    in a household. 422 empty body, `report_day` out of 1..7, malformed
+    `report_time`, or unknown timezone.
+    """
+    sb = get_supabase()
+    household_id = _admin_household_id(sb, admin.id)
+
+    patch = body.model_dump(exclude_unset=True)
+    if patch:
+        sb.table("households").update(patch).eq("id", household_id).execute()
+
+    return _fetch_report_settings(sb, household_id)

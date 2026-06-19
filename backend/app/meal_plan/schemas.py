@@ -1,12 +1,13 @@
 from datetime import date, datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..items.schemas import ItemCategory
 
 PrepLabel = Literal["prep", "reheat", "fresh"]
 MealPlanStatus = Literal["draft", "finalized"]
+MealPlanReaction = Literal["liked", "disliked"]
 
 
 class MealRequest(BaseModel):
@@ -15,9 +16,12 @@ class MealRequest(BaseModel):
 
 
 class SubmissionUpsert(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     week_start: date
     busy_days: list[int] = Field(default_factory=list, max_length=7)
     meal_requests: list[MealRequest] = Field(default_factory=list, max_length=20)
+    week_notes: Optional[str] = Field(default=None, max_length=2000)
 
     @field_validator("busy_days")
     @classmethod
@@ -37,6 +41,7 @@ class SubmissionOut(BaseModel):
     week_start: date
     busy_days: list[int]
     meal_requests: list[MealRequest]
+    week_notes: Optional[str]
     submitted_at: datetime
 
 
@@ -84,10 +89,14 @@ class MealPlanOut(BaseModel):
 
 
 class GenerateMealPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     week_start: date
 
 
 class DayUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     meal_name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     prep_label: Optional[PrepLabel] = None
     notes: Optional[str] = Field(default=None, max_length=1000)
@@ -98,3 +107,24 @@ class DayUpdate(BaseModel):
         if not self.model_fields_set:
             raise ValueError("PATCH body must include at least one field")
         return self
+
+
+class ReactionUpsert(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    day_id: str
+    reaction: MealPlanReaction
+
+
+class ReactionOut(BaseModel):
+    id: str
+    day_id: str
+    user_id: str
+    reaction: MealPlanReaction
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReactionList(BaseModel):
+    plan_id: str
+    reactions: list[ReactionOut]

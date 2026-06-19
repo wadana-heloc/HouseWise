@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..items.schemas import SCAN_IMAGE_MAX_BASE64, ItemCategory
 
@@ -17,8 +17,11 @@ class RecipeIngredient(BaseModel):
 
 
 class RecipeCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=2000)
+    story: Optional[str] = Field(default=None, min_length=1, max_length=5000)
     ingredients: list[RecipeIngredient] = Field(default_factory=list)
     instructions: Optional[str] = Field(default=None, max_length=10_000)
     tags: list[str] = Field(default_factory=list, max_length=20)
@@ -30,8 +33,11 @@ class RecipeCreate(BaseModel):
 
 
 class RecipeUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=2000)
+    story: Optional[str] = Field(default=None, min_length=1, max_length=5000)
     ingredients: Optional[list[RecipeIngredient]] = None
     instructions: Optional[str] = Field(default=None, max_length=10_000)
     tags: Optional[list[str]] = Field(default=None, max_length=20)
@@ -51,6 +57,7 @@ class RecipeOut(BaseModel):
     household_id: str
     name: str
     description: Optional[str]
+    story: Optional[str]
     ingredients: list[RecipeIngredient]
     instructions: Optional[str]
     tags: list[str]
@@ -68,13 +75,29 @@ class RecipeList(BaseModel):
 
 
 class GenerateRecipeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     prompt: str = Field(min_length=5, max_length=500)
     tag_hints: list[str] = Field(default_factory=list, max_length=10)
 
 
 class ExtractPhotoRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     image_base64: str = Field(min_length=1, max_length=SCAN_IMAGE_MAX_BASE64)
     media_type: Literal["image/jpeg", "image/png", "image/webp"]
+
+
+class PersonalizedDescription(BaseModel):
+    """Per-user, AI-generated description of a recipe. Cached in
+    `recipe_personalized_descriptions`; regenerated when the recipe's
+    `updated_at` advances past the cache row's `generated_at`. Empty string
+    means the agent couldn't produce one — FE renders the recipe without
+    the blurb in that case.
+    """
+
+    description: str
+    generated_at: datetime
 
 
 class RecipePreview(BaseModel):
