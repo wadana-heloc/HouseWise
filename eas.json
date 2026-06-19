@@ -1,0 +1,31 @@
+{
+  "cli": {
+    "version": ">= 16.0.0"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "internal": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://housewise-backend-tlkr7hhzja-ww.a.run.app",
+        "EXPO_PUBLIC_OFF_API_URL": "https://world.openfoodfacts.org/api/v3",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://oaheerjoqnchfgnpbdwr.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9haGVlcmpvcW5jaGZnbnBiZHdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxNjk0MTQsImV4cCI6MjA5NDc0NTQxNH0.GoF1CIk07sK0Uvcpidp-CpCoZjtiaWE4M_MmBMj4SGo"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "app-bundle"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
