@@ -17,7 +17,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 #
 # Usage:
 #   python run_test.py                        <- uses product.jpg in this folder
-#   python run_test.py path/to/product.jpg    <- uses a specific image
+#   python run_test.py path/to/image.jpg      <- uses a specific image
 
 import base64
 import os
@@ -30,9 +30,9 @@ load_dotenv()
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from image_agent import _decode_image_bytes, _extract_ocr_text, analyze_product_image
+from image_agent import analyze_product_image
 
-# dict[str, str] — map file extensions to media types accepted by EasyOCR / Claude
+# dict[str, str] — map file extensions to media types accepted by the Claude Vision API
 EXTENSION_TO_MEDIA_TYPE = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -72,43 +72,21 @@ print(f"Size:       {len(image_bytes) / 1024:.1f} KB")
 print()
 
 # -----------------------------------------------------------------------
-# Step 1 — EasyOCR (free, runs locally)
+# Claude Haiku Vision — identifies the item from the image in one pass
 # -----------------------------------------------------------------------
-print("Step 1 — EasyOCR (free, local)")
-print("-" * 40)
-
-# float — wall-clock start time for OCR step
-ocr_start_time = time.time()
-
-# bytes — decoded image bytes
-raw_image_bytes = _decode_image_bytes(image_b64)
-
-# str — raw text fragments extracted from the image
-ocr_text = _extract_ocr_text(raw_image_bytes)
-
-# float — seconds the OCR step took
-ocr_duration_seconds = time.time() - ocr_start_time
-
-print(f"Duration:   {ocr_duration_seconds:.1f}s")
-print(f"OCR output: {ocr_text if ocr_text else '(nothing detected)'}")
-print()
-
-# -----------------------------------------------------------------------
-# Step 2 — Claude text API (structures the OCR output into JSON)
-# -----------------------------------------------------------------------
-print("Step 2 — Claude text API (structures OCR output)")
+print("Claude Haiku Vision")
 print("-" * 40)
 
 # float
-claude_start_time = time.time()
+start_time = time.time()
 
 # ProductAnalysisResult
 result = analyze_product_image(image_b64, media_type)
 
 # float
-claude_duration_seconds = time.time() - claude_start_time
+duration_seconds = time.time() - start_time
 
-print(f"Duration:   {claude_duration_seconds:.1f}s")
+print(f"Duration:   {duration_seconds:.1f}s")
 print()
 
 # -----------------------------------------------------------------------

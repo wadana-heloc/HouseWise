@@ -5,8 +5,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 #
 # Unit tests for the Image agent.
 # Every function in image_agent.py has at least one test here.
-# The Anthropic client and EasyOCR reader are mocked so no real API calls
-# or OCR model loads occur during unit testing.
+# The Anthropic client is mocked so no real API calls occur during unit testing.
 
 import base64
 import json
@@ -14,72 +13,12 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from image_agent import (
-    _call_claude_text,
-    _decode_image_bytes,
     _extract_json_object,
-    _extract_ocr_text,
     _extract_text_from_response,
     _parse_response,
     _strip_markdown_fences,
     analyze_product_image,
 )
-from image_config import IMAGE_USER_PROMPT
-
-
-class TestDecodeImageBytes(unittest.TestCase):
-    def test_decodes_base64_to_bytes(self):
-        # What:    Verifies that a valid base64 string is decoded back to the original bytes.
-        # Returns: None
-        # Input:   base64.b64encode(b"hello") = "aGVsbG8="
-        # Output:  b"hello"
-
-        # str — base64 encoding of b"hello"
-        encoded = base64.b64encode(b"hello").decode("utf-8")
-
-        self.assertEqual(_decode_image_bytes(encoded), b"hello")
-
-
-class TestExtractOcrText(unittest.TestCase):
-    @patch("image_agent._ocr_reader")
-    def test_joins_confident_fragments(self, mock_reader):
-        # What:    Verifies that text fragments above the confidence threshold
-        #          are joined into a single string.
-        # Returns: None
-        # Input:   OCR results with two high-confidence fragments
-        # Output:  "Almarai 1L"
-
-        # list[tuple] — mocked EasyOCR output: (bbox, text, confidence)
-        mock_reader.readtext.return_value = [
-            (None, "Almarai", 0.95),
-            (None, "1L", 0.85),
-        ]
-
-        self.assertEqual(_extract_ocr_text(b"fake_bytes"), "Almarai 1L")
-
-    @patch("image_agent._ocr_reader")
-    def test_drops_low_confidence_fragments(self, mock_reader):
-        # What:    Verifies that fragments below IMAGE_OCR_CONFIDENCE_THRESHOLD are excluded.
-        # Returns: None
-        # Input:   one confident fragment and one noise fragment (confidence 0.1)
-        # Output:  only the confident fragment is included
-
-        mock_reader.readtext.return_value = [
-            (None, "Almarai", 0.95),
-            (None, "@@##", 0.1),
-        ]
-
-        self.assertEqual(_extract_ocr_text(b"fake_bytes"), "Almarai")
-
-    @patch("image_agent._ocr_reader")
-    def test_returns_empty_string_when_no_detections(self, mock_reader):
-        # What:    Verifies that an empty string is returned when OCR finds nothing.
-        # Returns: None
-        # Input:   empty OCR result list
-        # Output:  ""
-
-        mock_reader.readtext.return_value = []
-
-        self.assertEqual(_extract_ocr_text(b"fake_bytes"), "")
 
 
 class TestExtractTextFromResponse(unittest.TestCase):
@@ -97,13 +36,13 @@ class TestExtractTextFromResponse(unittest.TestCase):
         # MagicMock
         second_block = MagicMock()
         second_block.type = "text"
-        second_block.text = '  {"name": "Almarai"}  '
+        second_block.text = '  {"name": "Apple"}  '
 
         # MagicMock
         mock_response = MagicMock()
         mock_response.content = [first_block, second_block]
 
-        self.assertEqual(_extract_text_from_response(mock_response), '{"name": "Almarai"}')
+        self.assertEqual(_extract_text_from_response(mock_response), '{"name": "Apple"}')
 
     def test_returns_empty_string_when_no_text_blocks(self):
         # What:    Verifies that an empty string is returned when there are no text blocks.
@@ -137,11 +76,11 @@ class TestStripMarkdownFences(unittest.TestCase):
     def test_plain_text_passes_through_unchanged(self):
         # What:    Verifies that text without fences is returned as-is.
         # Returns: None
-        # Input:   '{"name": "Almarai"}'
-        # Output:  '{"name": "Almarai"}'
+        # Input:   '{"name": "Apple"}'
+        # Output:  '{"name": "Apple"}'
 
         # str
-        plain_json = '{"name": "Almarai"}'
+        plain_json = '{"name": "Apple"}'
 
         self.assertEqual(_strip_markdown_fences(plain_json), plain_json)
 
@@ -150,22 +89,22 @@ class TestExtractJsonObject(unittest.TestCase):
     def test_extracts_object_from_prose_prefix(self):
         # What:    Verifies that leading prose before the JSON object is stripped.
         # Returns: None
-        # Input:   'Here is the info:\n{"name": "Almarai"}'
-        # Output:  '{"name": "Almarai"}'
+        # Input:   'Here is the info:\n{"name": "Apple"}'
+        # Output:  '{"name": "Apple"}'
 
         self.assertEqual(
-            _extract_json_object('Here is the info:\n{"name": "Almarai"}'),
-            '{"name": "Almarai"}',
+            _extract_json_object('Here is the info:\n{"name": "Apple"}'),
+            '{"name": "Apple"}',
         )
 
     def test_plain_object_passes_through(self):
         # What:    Verifies that text already starting with '{' is returned unchanged.
         # Returns: None
-        # Input:   '{"name": "Almarai"}'
-        # Output:  '{"name": "Almarai"}'
+        # Input:   '{"name": "Apple"}'
+        # Output:  '{"name": "Apple"}'
 
         # str
-        plain = '{"name": "Almarai"}'
+        plain = '{"name": "Apple"}'
 
         self.assertEqual(_extract_json_object(plain), plain)
 
@@ -180,10 +119,11 @@ class TestExtractJsonObject(unittest.TestCase):
 
 
 class TestParseResponse(unittest.TestCase):
-    def test_returns_product_result_on_valid_json(self):
-        # What:    Verifies that _parse_response maps JSON fields to ProductAnalysisResult.
+    def test_returns_product_result_for_packaged_item(self):
+        # What:    Verifies that _parse_response maps JSON fields to ProductAnalysisResult
+        #          for a labelled packaged product.
         # Returns: None
-        # Input:   mocked response with valid product JSON
+        # Input:   mocked response with valid product JSON (name, brand, size)
         # Output:  ProductAnalysisResult with name, brand, size populated
 
         # dict
@@ -206,6 +146,33 @@ class TestParseResponse(unittest.TestCase):
         self.assertEqual(result.size, "1L")
         self.assertIsNone(result.reason)
 
+    def test_returns_name_only_for_unpackaged_item(self):
+        # What:    Verifies that _parse_response handles an unpackaged item (e.g. apple)
+        #          where only name is returned and brand/size are null.
+        # Returns: None
+        # Input:   mocked response with name="Apple", brand=null, size=null
+        # Output:  ProductAnalysisResult with name="Apple", brand=None, size=None, reason=None
+
+        # dict
+        item_json = {"name": "Apple", "brand": None, "size": None, "reason": None}
+
+        # MagicMock
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = json.dumps(item_json)
+
+        # MagicMock
+        mock_response = MagicMock()
+        mock_response.content = [text_block]
+
+        # ProductAnalysisResult
+        result = _parse_response(mock_response)
+
+        self.assertEqual(result.name, "Apple")
+        self.assertIsNone(result.brand)
+        self.assertIsNone(result.size)
+        self.assertIsNone(result.reason)
+
     def test_returns_null_fields_with_reason_on_unidentifiable(self):
         # What:    Verifies that a response with null fields and a reason string
         #          maps correctly to ProductAnalysisResult.
@@ -214,7 +181,7 @@ class TestParseResponse(unittest.TestCase):
         # Output:  ProductAnalysisResult with all product fields null, reason populated
 
         # dict
-        null_json = {"name": None, "brand": None, "size": None, "reason": "OCR text unrecognisable"}
+        null_json = {"name": None, "brand": None, "size": None, "reason": "Image too blurry to identify"}
 
         # MagicMock
         text_block = MagicMock()
@@ -229,7 +196,7 @@ class TestParseResponse(unittest.TestCase):
         result = _parse_response(mock_response)
 
         self.assertIsNone(result.name)
-        self.assertEqual(result.reason, "OCR text unrecognisable")
+        self.assertEqual(result.reason, "Image too blurry to identify")
 
     def test_returns_fallback_on_malformed_json(self):
         # What:    Verifies that _parse_response returns a null-filled fallback
@@ -254,44 +221,14 @@ class TestParseResponse(unittest.TestCase):
         self.assertEqual(result.reason, "Failed to parse model response")
 
 
-class TestCallClaudeText(unittest.TestCase):
-    @patch("image_agent.client")
-    def test_sends_ocr_text_and_system_prompt(self, mock_client):
-        # What:    Verifies that _call_claude_text passes the OCR text and system prompt
-        #          to the Anthropic text API in the correct structure.
-        # Returns: None
-        # Input:   mocked client, ocr_text="Almarai Full Fat Milk 1L"
-        # Output:  client.messages.create called once with correct model and message content
-
-        mock_client.messages.create.return_value = MagicMock()
-
-        _call_claude_text("Almarai Full Fat Milk 1L")
-
-        # dict — the keyword arguments passed to messages.create
-        call_kwargs = mock_client.messages.create.call_args.kwargs
-
-        self.assertEqual(call_kwargs["model"], "claude-sonnet-4-6")
-        # str — the user message text should contain both the prompt prefix and OCR text
-        user_content = call_kwargs["messages"][0]["content"]
-        self.assertIn("Almarai Full Fat Milk 1L", user_content)
-        self.assertIn(IMAGE_USER_PROMPT, user_content)
-
-
 class TestAnalyzeProductImage(unittest.TestCase):
     @patch("image_agent.client")
-    @patch("image_agent._ocr_reader")
-    def test_returns_product_result_on_success(self, mock_reader, mock_client):
-        # What:    Verifies the full pipeline: OCR extracts text, Claude structures it,
-        #          result is returned as ProductAnalysisResult.
+    def test_returns_result_for_packaged_product(self, mock_client):
+        # What:    Verifies the full pipeline: image is sent to Claude Vision,
+        #          which returns a structured JSON for a packaged product.
         # Returns: None
-        # Input:   mocked OCR returning "Lays Chips 165g", mocked Claude returning JSON
+        # Input:   mocked Claude returning JSON for "Lays Chips 165g"
         # Output:  ProductAnalysisResult(name="Chips", brand="Lays", size="165g")
-
-        mock_reader.readtext.return_value = [
-            (None, "Lays", 0.95),
-            (None, "Chips", 0.90),
-            (None, "165g", 0.88),
-        ]
 
         # dict
         product_json = {"name": "Chips", "brand": "Lays", "size": "165g", "reason": None}
@@ -306,7 +243,7 @@ class TestAnalyzeProductImage(unittest.TestCase):
         mock_response.content = [text_block]
         mock_client.messages.create.return_value = mock_response
 
-        # str — fake base64 (any valid base64 works since OCR is mocked)
+        # str — fake base64 (any valid base64 works since the API is mocked)
         fake_base64 = base64.b64encode(b"fake_image").decode("utf-8")
 
         # ProductAnalysisResult
@@ -316,15 +253,26 @@ class TestAnalyzeProductImage(unittest.TestCase):
         self.assertEqual(result.brand, "Lays")
         self.assertEqual(result.size, "165g")
 
-    @patch("image_agent._ocr_reader")
-    def test_returns_no_text_detected_when_ocr_is_empty(self, mock_reader):
-        # What:    Verifies that when OCR finds no text, the agent returns a null result
-        #          with reason "No text detected in image" without calling Claude at all.
+    @patch("image_agent.client")
+    def test_returns_name_only_for_unpackaged_item(self, mock_client):
+        # What:    Verifies the full pipeline for an unpackaged item like an apple.
+        #          Claude Vision identifies it visually; brand and size are null.
         # Returns: None
-        # Input:   mocked OCR returning empty results
-        # Output:  ProductAnalysisResult with all fields null, reason="No text detected in image"
+        # Input:   mocked Claude returning JSON for a visually identified apple
+        # Output:  ProductAnalysisResult(name="Apple", brand=None, size=None, reason=None)
 
-        mock_reader.readtext.return_value = []
+        # dict
+        item_json = {"name": "Apple", "brand": None, "size": None, "reason": None}
+
+        # MagicMock
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = json.dumps(item_json)
+
+        # MagicMock
+        mock_response = MagicMock()
+        mock_response.content = [text_block]
+        mock_client.messages.create.return_value = mock_response
 
         # str
         fake_base64 = base64.b64encode(b"fake_image").decode("utf-8")
@@ -332,27 +280,62 @@ class TestAnalyzeProductImage(unittest.TestCase):
         # ProductAnalysisResult
         result = analyze_product_image(fake_base64, "image/jpeg")
 
-        self.assertIsNone(result.name)
-        self.assertEqual(result.reason, "No text detected in image")
+        self.assertEqual(result.name, "Apple")
+        self.assertIsNone(result.brand)
+        self.assertIsNone(result.size)
+        self.assertIsNone(result.reason)
 
-    @patch("image_agent._ocr_reader")
-    def test_returns_null_fallback_on_api_error(self, mock_reader):
-        # What:    Verifies that when the Anthropic API raises an error, the agent
-        #          returns a null-filled result rather than propagating the exception.
+    @patch("image_agent.client")
+    def test_passes_image_to_claude_vision_correctly(self, mock_client):
+        # What:    Verifies that analyze_product_image passes the image as a base64
+        #          vision content block to the Claude API (not as text).
         # Returns: None
-        # Input:   mocked OCR returning text, mocked client raising an exception
-        # Output:  ProductAnalysisResult with all fields null, reason contains "Agent error"
+        # Input:   mocked client, fake base64 image
+        # Output:  client.messages.create called with an image content block
 
-        mock_reader.readtext.return_value = [(None, "Almarai", 0.9)]
+        # MagicMock
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = json.dumps({"name": "Egg", "brand": None, "size": None, "reason": None})
+
+        mock_response = MagicMock()
+        mock_response.content = [text_block]
+        mock_client.messages.create.return_value = mock_response
 
         # str
         fake_base64 = base64.b64encode(b"fake_image").decode("utf-8")
 
-        with patch("image_agent.client") as mock_client:
-            mock_client.messages.create.side_effect = Exception("API unavailable")
+        analyze_product_image(fake_base64, "image/jpeg")
 
-            # ProductAnalysisResult
-            result = analyze_product_image(fake_base64, "image/jpeg")
+        # dict — keyword args passed to messages.create
+        call_kwargs = mock_client.messages.create.call_args.kwargs
+
+        self.assertEqual(call_kwargs["model"], "claude-haiku-4-5-20251001")
+
+        # list — the content blocks in the user message
+        content_blocks = call_kwargs["messages"][0]["content"]
+
+        # bool — at least one content block must be an image block
+        image_blocks = [b for b in content_blocks if b.get("type") == "image"]
+        self.assertEqual(len(image_blocks), 1)
+        self.assertEqual(image_blocks[0]["source"]["data"], fake_base64)
+        self.assertEqual(image_blocks[0]["source"]["media_type"], "image/jpeg")
+
+    @patch("image_agent.client")
+    def test_returns_null_fallback_on_api_error(self, mock_client):
+        # What:    Verifies that when the Anthropic API raises an error, the agent
+        #          returns a null-filled result rather than propagating the exception.
+        # Returns: None
+        # Input:   mocked client raising an exception
+        # Output:  ProductAnalysisResult with all fields null, reason contains "Agent error"
+
+        mock_client.messages.create.side_effect = Exception("API unavailable")
+
+        # str
+        fake_base64 = base64.b64encode(b"fake_image").decode("utf-8")
+
+        # ProductAnalysisResult
+        result = analyze_product_image(fake_base64, "image/jpeg")
 
         self.assertIsNone(result.name)
         self.assertIn("Agent error", result.reason)

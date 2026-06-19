@@ -36,7 +36,9 @@ def build_user_prompt(items: list[str], stores: list[str]) -> str:
     return f"""What are the current prices in AED of {items_formatted} at these UAE stores?
 {stores_formatted}
 
-Map each price you find to the matching store URL in the output JSON."""
+Map each price you find to the matching store URL in the output JSON.
+If you cannot find a price for a store, set price to null.
+Respond with the JSON array only — no explanation, no prose."""
 
 
 def _compute_summary_fields(result: dict) -> dict:

@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from price_config import STORE_URLS
 from price_agent import search_grocery_prices
 
-items = ["Basmati Rice"]
+items = ["Kinder Bueno"]
 
 print(f"Running: {len(items)} items × {len(STORE_URLS)} stores")
 print(f"Items: {items}")
@@ -24,11 +24,12 @@ for entry in results:
     print(f"\n{entry['item']}")
     print(f"  cheapest raw price : {entry['cheapest_price']} AED at {entry['cheapest_store_url']}")
     print(f"  best value per unit: {entry['best_value_unit_price']} {entry['best_value_unit']} at {entry['best_value_store_url']}")
-    print(f"  {'Store':<25} {'Price':>10}  {'Unit Price':>12}  {'Unit':<14}  Product")
-    print(f"  {'-'*25}  {'-'*9}  {'-'*11}  {'-'*13}  {'-'*40}")
+    print(f"  {'Store':<25} {'Price':>10}  {'Unit Price':>12}  {'Unit':<14}  {'Product':<45}  URL")
+    print(f"  {'-'*25}  {'-'*9}  {'-'*11}  {'-'*13}  {'-'*44}  {'-'*60}")
     for p in entry["prices"]:
         price_str = f"{p['price']:.2f} AED" if p["price"] is not None else "n/a"
         unit_price_str = f"{p['unit_price']:.4f}" if p["unit_price"] is not None else "n/a"
         unit_str = p["unit"] or "n/a"
-        product_str = (p["product_name_as_found"] or "n/a")[:50]
-        print(f"  {p['store_name']:<25} {price_str:>10}  {unit_price_str:>12}  {unit_str:<14}  {product_str}")
+        product_str = (p["product_name_as_found"] or "n/a")[:44]
+        url_str = p["product_url"] or "n/a"
+        print(f"  {p['store_name']:<25} {price_str:>10}  {unit_price_str:>12}  {unit_str:<14}  {product_str:<45}  {url_str}")
