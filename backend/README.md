@@ -36,6 +36,7 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | `SUPABASE_JWT_AUDIENCE` | `authenticated` |
 | `APP_DEEP_LINK` | `redirect_to` for the **admin** password-reset email. Only remaining email-link flow. Must be allow-listed in Supabase Dashboard → Auth → URL Configuration. |
 | `ANTHROPIC_API_KEY` | Used by the image-analysis agent at [ai_agents/image-agent/](../ai_agents/image-agent/) for `POST /items/scan-image`. Required at startup. |
+| `PRICE_AGENT_DUMMY` | Optional, default `false`. When `true` / `1` / `yes`, `POST /prices/search` uses the cheap Haiku-backed mock at [ai_agents/price-agent/price_agent_dummy.py](../ai_agents/price-agent/price_agent_dummy.py) (no web search, fake prices). Useful during FE development. |
 
 ## Endpoints
 
@@ -91,6 +92,11 @@ See [.env.example](.env.example) for the full list. Required at startup:
 | POST   | `/meal-plan/{plan_id}/finalize` | bearer:admin | Flip `status` to `'finalized'` and return the updated plan. **Does not touch `/items`** — FE reads the plan's days and pushes whichever ingredients it wants into the shopping list itself. Idempotent. |
 | POST   | `/meal-plan/{plan_id}/react` | bearer | Upsert caller's reaction on one day. `{day_id, reaction: 'liked' \| 'disliked'}`. 409 if plan is still `'draft'`. |
 | GET    | `/meal-plan/{plan_id}/reactions` | bearer | Every household member's reactions across the plan's 7 days. |
+| POST   | `/prices/search` | bearer:admin | Search grocery prices for `items` across UAE stores via the price agent. Optionally merge `low_stock_flags` via `use_low_stock=true`. Per-store `price: null` is normal; 502 only on all-null total failure. 503 if the agent module isn't packaged in this deployment. Toggle the dummy mock with `PRICE_AGENT_DUMMY=true`. |
+| POST   | `/to-buy` | bearer:admin | **Replace** the household's to-buy list with `entries`. Each entry = `{item_id, chosen_store_url, chosen_store_name, chosen_price, currency}`. Validates every item is in the household and in `pending` or `approved` status. Empty entries list clears the list. 404 on unknown item, 409 on disallowed status. |
+| GET    | `/to-buy` | bearer | List the caller's household to-buy entries with item info joined (`item_name`, `quantity`, `unit`) + aggregate `estimated_total`. Readable by any household member. |
+| POST   | `/to-buy/{entry_id}/done` | bearer | Mark a to-buy entry bought. Atomically flips the underlying `items.status` to `done` **and** deletes the to-buy entry (cross-list sync invariant). 404 if entry not in caller's household. |
+| DELETE | `/to-buy/{entry_id}` | bearer:admin | Drop an entry from the to-buy list without marking the item bought. Does not touch `items.status`. |
 | GET    | `/health` | public | Liveness. |
 
 Items flow + state machine + permission matrix: [docs/items-flow.md](../docs/items-flow.md).
@@ -100,6 +106,7 @@ Stores (admin-managed, family-readable): [docs/stores-flow.md](../docs/stores-fl
 Profile + health-preferences flow: [docs/profile-flow.md](../docs/profile-flow.md).
 Cookbook (AI endpoints are pass-through previews; single save endpoint; admin saves → approved, family saves → pending): [docs/cookbook-flow.md](../docs/cookbook-flow.md).
 Meal plan (submissions + AI generate + day-edit; 502 on agent failure): [docs/meal-plan-flow.md](../docs/meal-plan-flow.md).
+To-buy list (admin's frozen buying decision + bidirectional sync with `items.done`): [docs/to-buy-flow.md](../docs/to-buy-flow.md).
 
 **Refresh** is intentionally **not** an endpoint here — the mobile client uses the Supabase JS SDK to refresh access tokens automatically. See [docs/auth-flow.md](../docs/auth-flow.md#token-refresh-handled-by-the-sdk).
 
@@ -130,6 +137,7 @@ Run migrations in order in the Supabase SQL Editor:
 12. [supabase/migrations/0012_recipe_personalized_descriptions.sql](../supabase/migrations/0012_recipe_personalized_descriptions.sql) — `public.recipe_personalized_descriptions` cache table + per-user SELECT RLS (`user_id = auth.uid()`). Staleness checked in the app layer against `recipes.updated_at`.
 13. [supabase/migrations/0013_household_report_settings.sql](../supabase/migrations/0013_household_report_settings.sql) — adds `report_day smallint NOT NULL DEFAULT 7` (ISO weekday), `report_time text NOT NULL DEFAULT '09:00'`, and `report_timezone text NOT NULL DEFAULT 'UTC'` (IANA) to `public.households`. Backfills existing rows.
 14. [supabase/migrations/0014_recipe_story.sql](../supabase/migrations/0014_recipe_story.sql) — adds `story text` to `public.recipes` (nullable, 1..5000 chars when present). Manually authored — AI generate / photo extract endpoints do not populate this field. Existing recipes stay `NULL`.
+15. [supabase/migrations/0015_to_buy_list.sql](../supabase/migrations/0015_to_buy_list.sql) — `public.to_buy_list` table (admin's frozen buying decisions: `item_id` FK + chosen store/price snapshot + `unique (household_id, item_id)`) + same-household SELECT RLS + `updated_at` trigger. Also adds `public.households.last_report_sent_at timestamptz` (nullable). **Dormant in v1** — reserved for a future weekly-report cron; no code reads or writes it today. See [docs/to-buy-flow.md](../docs/to-buy-flow.md) for the bidirectional sync with `items.status='done'`.
 
 0001 creates:
 - `public.households`, `public.users` with FKs into `auth.users`

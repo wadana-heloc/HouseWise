@@ -86,6 +86,12 @@ Concretely:
 
 Transitions to the same status (no-op) are accepted and return the row unchanged.
 
+### Cross-list sync side effect on `done`
+
+When `POST /items/{id}/status` flips an item to `done`, the same handler also deletes any matching `to_buy_list` row for that item (Direction A of the bidirectional sync — see [to-buy-flow.md](to-buy-flow.md)). Marking an item bought from either screen is the same buying event; the lists never drift.
+
+No other status transition touches `to_buy_list`. If you need to remove an item from the to-buy list without marking the item bought (admin changed their mind), use `DELETE /to-buy/{entry_id}` — that one preserves `items.status`.
+
 ---
 
 ## Sequences

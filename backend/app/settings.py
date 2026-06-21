@@ -16,5 +16,11 @@ class Settings(BaseSettings):
 
     ANTHROPIC_API_KEY: str
 
+    # POST /prices/search — when true, the endpoint uses the dummy Haiku-backed
+    # mock (no web search, fake prices, near-zero cost). The router reads this
+    # via os.getenv at request time to match the integration guide; this field
+    # exists for documentation, type-safety, and .env loading.
+    PRICE_AGENT_DUMMY: bool = False
+
 
 settings = Settings()

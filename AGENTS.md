@@ -96,6 +96,7 @@ supabase/
     0012_recipe_personalized_descriptions.sql # recipe_personalized_descriptions cache (per-user RLS)
     0013_household_report_settings.sql       # households.report_day / report_time / report_timezone (admin-only weekly shopping report schedule)
     0014_recipe_story.sql                    # recipes.story text (nullable, 1..5000 chars; manually authored narrative)
+    0015_to_buy_list.sql                     # to_buy_list table (admin's frozen buying decisions). Also adds households.last_report_sent_at (dormant; reserved for future cron, not read/written today).
 
 docs/
   auth-flow.md         # runtime sequences, SDK refresh, failure modes
@@ -106,6 +107,7 @@ docs/
   profile-flow.md      # self profile + health-preferences + admin member-patch
   scan-image-flow.md   # POST /items/scan-image pass-through to the image agent
   stores-flow.md       # stores CRUD, URL normalization, admin/family permission split
+  to-buy-flow.md       # to_buy_list endpoints, bidirectional sync with items.done, replace-on-regenerate
 
 ai_agents/             # ↑ NOT under backend/. Independent Python files owned by the AI team.
   image-agent/         # Hyphenated folder; backend's main.py adds this to sys.path on boot.
@@ -117,6 +119,10 @@ ai_agents/             # ↑ NOT under backend/. Independent Python files owned 
     recipe_photo_agent.py  # extract_recipe_from_image() — called by /cookbook/recipes/extract-photo
   meal-plan-agent/     # Hyphenated folder; same sys.path treatment.
     meal_plan_agent.py # generate_weekly_plan() — called by POST /meal-plan/generate
+  price-agent/         # Hyphenated folder; same sys.path treatment.
+    price_agent.py        # search_grocery_prices() — real Sonnet + web-search, called by POST /prices/search
+    price_agent_dummy.py  # search_grocery_prices() — Haiku mock; used when PRICE_AGENT_DUMMY=true
+    price_config.py       # STORE_URLS — the four hardcoded UAE store URLs
 ```
 
 ---

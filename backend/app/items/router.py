@@ -270,6 +270,13 @@ def update_status(
     _check_transition(item["status"], body.status, role)
 
     sb.table("items").update({"status": body.status}).eq("id", item_id_str).execute()
+
+    # Cross-list sync (Direction A, per docs/to-buy-flow.md): marking an item
+    # `done` here is the same buying event as POST /to-buy/{id}/done. Drop the
+    # matching to_buy_list row so the two lists stay in sync.
+    if body.status == "done":
+        sb.table("to_buy_list").delete().eq("item_id", item_id_str).execute()
+
     return _fetch_item_in_household(sb, item_id_str, household_id)
 
 

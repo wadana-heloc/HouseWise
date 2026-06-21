@@ -7,7 +7,7 @@ from pathlib import Path
 # We add each folder to sys.path so the underscored `*_agent.py` files inside
 # resolve as top-level modules. Drop a folder from this list once the AI team
 # repackages it with an underscored folder name.
-for _folder in ("image-agent", "cookbook-agent", "recipe-photo-agent", "meal-plan-agent"):
+for _folder in ("image-agent", "cookbook-agent", "recipe-photo-agent", "meal-plan-agent", "price-agent"):
     _p = Path(__file__).resolve().parents[2] / "ai_agents" / _folder
     if _p.is_dir() and str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
@@ -24,7 +24,9 @@ from .logging_setup import configure_logging
 from .low_stock.router import router as low_stock_router
 from .me.router import router as me_router
 from .meal_plan.router import router as meal_plan_router
+from .prices.router import router as prices_router
 from .stores.router import router as stores_router
+from .to_buy.router import router as to_buy_router
 
 configure_logging()
 
@@ -115,7 +117,9 @@ app.include_router(items_router)
 app.include_router(low_stock_router)
 app.include_router(me_router)
 app.include_router(meal_plan_router)
+app.include_router(prices_router)
 app.include_router(stores_router)
+app.include_router(to_buy_router)
 
 
 @app.get("/health", tags=["meta"], summary="Liveness probe")
