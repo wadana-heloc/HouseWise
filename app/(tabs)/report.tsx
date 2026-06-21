@@ -1,144 +1,275 @@
-import { View, Text, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
+import { useCallback, useState } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  StatusBar,
+  ActivityIndicator,
+  Alert,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-
-const REPORT = {
-  week: 'Week of 19 May 2026',
-  status: 'ready' as 'ready' | 'pending',
-  totalAED: 312,
-  stores: [
-    {
-      name: 'Carrefour',
-      total: 148,
-      items: [
-        { name: 'Whole milk 2L', price: 12.5,  size: '2L',   pricePerUnit: '6.25/L',  health: 'standard', qty: 2 },
-        { name: 'Greek yogurt',  price: 18.75, size: '500g', pricePerUnit: '37.5/kg', health: 'healthy',  qty: 3 },
-        { name: 'Eggs 30-pack',  price: 28.0,  size: '30pk', pricePerUnit: '0.93/egg',health: 'standard', qty: 1 },
-      ],
-    },
-    {
-      name: 'Lulu',
-      total: 97,
-      items: [
-        { name: 'Brown rice 5kg',    price: 34.5, size: '5kg',  pricePerUnit: '6.9/kg',  health: 'healthy',  qty: 1 },
-        { name: 'Chicken breast 1kg',price: 29.9, size: '1kg',  pricePerUnit: '29.9/kg', health: 'healthy',  qty: 2 },
-      ],
-    },
-    {
-      name: 'Spinneys',
-      total: 67,
-      items: [
-        { name: 'Olive oil 750ml',    price: 42.0, size: '750ml', pricePerUnit: '56/L',   health: 'healthy',  qty: 1 },
-        { name: 'Whole wheat bread',  price: 12.5, size: '800g',  pricePerUnit: '15.6/kg',health: 'healthy',  qty: 2 },
-      ],
-    },
-  ],
-  approvals: [
-    { name: 'Ahmad', approved: true },
-    { name: 'Sara',  approved: true },
-    { name: 'Maha',  approved: false },
-  ],
-};
+import { useRouter, useFocusEffect } from 'expo-router';
+import { useAuthStore } from '../../store/authStore';
+import { getToBuyList, markEntryDone, deleteEntry, type ToBuyEntry, type ToBuyListOut } from '../../services/toBuy';
 
 export default function ReportScreen() {
   const router = useRouter();
-  const pendingApprovals = REPORT.approvals.filter((a) => !a.approved).length;
+  const { role } = useAuthStore();
+  const isAdmin = role === 'admin';
+
+  const [data, setData] = useState<ToBuyListOut | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+
+  async function fetchList() {
+    setLoading(true);
+    setError(null);
+    try {
+      const list = await getToBuyList();
+      setData(list);
+    } catch (err: any) {
+      setError('Could not load the shopping list. Check your connection.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchList();
+    }, []),
+  );
+
+  async function handleMarkDone(entry: ToBuyEntry) {
+    setActionLoadingId(entry.id);
+    try {
+      await markEntryDone(entry.id);
+      // Re-fetch to reflect cross-sync (items.status also flips)
+      await fetchList();
+    } catch {
+      Alert.alert('Error', 'Could not mark the item as bought. Please try again.');
+    } finally {
+      setActionLoadingId(null);
+    }
+  }
+
+  function handleDeleteEntry(entry: ToBuyEntry) {
+    Alert.alert(
+      'Remove from list?',
+      `Remove "${entry.item_name}" from the shopping list? The item will stay in your household list.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setActionLoadingId(entry.id);
+            try {
+              await deleteEntry(entry.id);
+              await fetchList();
+            } catch {
+              Alert.alert('Error', 'Could not remove the item. Please try again.');
+            } finally {
+              setActionLoadingId(null);
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  // ── Group entries by store ────────────────────────────────────────────────
+  function groupByStore(entries: ToBuyEntry[]) {
+    const map = new Map<string, ToBuyEntry[]>();
+    entries.forEach((e) => {
+      const existing = map.get(e.chosen_store_name) ?? [];
+      existing.push(e);
+      map.set(e.chosen_store_name, existing);
+    });
+    return map;
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <SafeAreaView className="flex-1 bg-bg-primary items-center justify-center">
+        <ActivityIndicator size="large" color="#1D9E75" />
+      </SafeAreaView>
+    );
+  }
+
+  if (error) {
+    return (
+      <SafeAreaView className="flex-1 bg-bg-primary items-center justify-center px-8 gap-4">
+        <View className="w-14 h-14 rounded-full bg-red-50 items-center justify-center">
+          <Ionicons name="cloud-offline-outline" size={28} color="#EF4444" />
+        </View>
+        <Text className="text-[15px] font-medium text-text-primary text-center">{error}</Text>
+        <TouchableOpacity className="bg-teal-600 rounded-xl px-6 py-3" onPress={fetchList}>
+          <Text className="text-[14px] font-semibold text-white">Retry</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
+
+  const isEmpty = !data || data.item_count === 0;
+  const byStore = data ? groupByStore(data.entries) : new Map<string, ToBuyEntry[]>();
 
   return (
     <SafeAreaView className="flex-1 bg-bg-primary">
       <StatusBar barStyle="dark-content" backgroundColor="#F5F7F5" />
 
       {/* Header */}
-      <View className="px-5 pt-4 pb-3 bg-white border-b border-border">
-        <View className="flex-row items-center justify-between">
-          <Text className="text-[22px] font-medium text-text-primary">Weekly report</Text>
-          <View className={`px-3 py-1 rounded-full ${REPORT.status === 'ready' ? 'bg-teal-50' : 'bg-amber-100'}`}>
-            <Text className={`text-[12px] font-medium ${REPORT.status === 'ready' ? 'text-teal-600' : 'text-amber-800'}`}>
-              {REPORT.status === 'ready' ? '✓ Ready to approve' : 'Pending'}
+      <View className="px-5 pt-4 pb-3 bg-white border-b border-border flex-row items-center justify-between">
+        <Text className="text-[22px] font-medium text-text-primary">Shopping list</Text>
+        {!isEmpty && data && (
+          <View className="bg-teal-50 px-3 py-1 rounded-full">
+            <Text className="text-[12px] font-medium text-teal-600">
+              {data.item_count} item{data.item_count !== 1 ? 's' : ''}
             </Text>
           </View>
-        </View>
-        <Text className="text-[13px] text-text-muted mt-1">{REPORT.week}</Text>
+        )}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 20, gap: 16 }}>
-
-        {/* Summary card */}
-        <View className="bg-teal-600 rounded-2xl p-4">
-          <Text className="text-[13px] text-white opacity-75 mb-1">Estimated total</Text>
-          <Text className="text-[32px] font-medium text-white">AED {REPORT.totalAED}</Text>
-          <View className="flex-row gap-2 mt-3 flex-wrap">
-            {REPORT.stores.map((s) => (
-              <View key={s.name} className="bg-white/20 rounded-lg px-3 py-1.5">
-                <Text className="text-[12px] text-white">{s.name}  AED {s.total}</Text>
-              </View>
-            ))}
+      {/* Empty state */}
+      {isEmpty ? (
+        <View className="flex-1 items-center justify-center px-8 gap-4">
+          <View className="w-20 h-20 rounded-full bg-teal-50 items-center justify-center">
+            <Ionicons name="cart-outline" size={36} color="#1D9E75" />
           </View>
+          <Text className="text-[18px] font-medium text-text-primary text-center">
+            Your shopping list is empty
+          </Text>
+          <Text className="text-[14px] text-text-muted text-center leading-5">
+            Tap "Generate report" to compare prices and start a new shopping trip.
+          </Text>
+          {isAdmin && (
+            <TouchableOpacity
+              className="mt-2 bg-teal-600 rounded-xl px-6 py-3 flex-row items-center gap-2"
+              onPress={() => router.push('/generate-report')}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="sparkles-outline" size={18} color="#fff" />
+              <Text className="text-[14px] font-semibold text-white">Generate report</Text>
+            </TouchableOpacity>
+          )}
         </View>
-
-        {/* Approvals */}
-        <View className="bg-white border border-border rounded-xl p-4">
-          <Text className="text-[13px] font-medium text-text-muted uppercase tracking-wider mb-3">Member approvals</Text>
-          <View className="gap-2">
-            {REPORT.approvals.map((a) => (
-              <View key={a.name} className="flex-row items-center justify-between">
-                <View className="flex-row items-center gap-2">
-                  <View className="w-8 h-8 rounded-full bg-teal-50 items-center justify-center">
-                    <Text className="text-[11px] font-medium text-teal-600">{a.name.slice(0, 2).toUpperCase()}</Text>
+      ) : (
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ padding: 20, gap: 16 }}
+        >
+          {/* Total card */}
+          <View className="bg-teal-600 rounded-2xl p-4">
+            <Text className="text-[13px] text-white opacity-75 mb-1">Estimated total</Text>
+            <Text className="text-[32px] font-medium text-white">
+              {data!.currency} {parseFloat(data!.estimated_total).toFixed(2)}
+            </Text>
+            <View className="flex-row gap-2 mt-3 flex-wrap">
+              {Array.from(byStore.entries()).map(([store, entries]) => {
+                const storeTotal = entries.reduce(
+                  (sum, e) => sum + parseFloat(e.chosen_price),
+                  0,
+                );
+                return (
+                  <View key={store} className="bg-white/20 rounded-lg px-3 py-1.5">
+                    <Text className="text-[12px] text-white">
+                      {store}  {data!.currency} {storeTotal.toFixed(2)}
+                    </Text>
                   </View>
-                  <Text className="text-[14px] text-text-primary">{a.name}</Text>
-                </View>
-                <View className={`flex-row items-center gap-1 px-2.5 py-1 rounded-full ${a.approved ? 'bg-teal-50' : 'bg-amber-100'}`}>
-                  <Ionicons name={a.approved ? 'checkmark-circle' : 'time-outline'} size={13} color={a.approved ? '#1D9E75' : '#92400E'} />
-                  <Text className={`text-[11px] font-medium ${a.approved ? 'text-teal-600' : 'text-amber-800'}`}>
-                    {a.approved ? 'Approved' : 'Pending'}
-                  </Text>
-                </View>
-              </View>
-            ))}
-          </View>
-        </View>
-
-        {/* Items by store */}
-        {REPORT.stores.map((store) => (
-          <View key={store.name} className="bg-white border border-border rounded-xl overflow-hidden">
-            <View className="flex-row items-center justify-between px-4 py-3 border-b border-border">
-              <Text className="text-[15px] font-medium text-text-primary">{store.name}</Text>
-              <Text className="text-[14px] font-medium text-teal-600">AED {store.total}</Text>
+                );
+              })}
             </View>
-            {store.items.map((item, i) => (
-              <View key={item.name} className={`px-4 py-3 flex-row items-center gap-3 ${i < store.items.length - 1 ? 'border-b border-border' : ''}`}>
-                <View className="flex-1">
-                  <View className="flex-row items-center gap-2">
-                    <Text className="text-[14px] text-text-primary">{item.name}</Text>
-                    {item.health === 'healthy' && (
-                      <View className="bg-teal-50 rounded px-1.5 py-0.5">
-                        <Text className="text-[10px] font-medium text-teal-600">Healthy</Text>
-                      </View>
+          </View>
+
+          {/* Items by store */}
+          {Array.from(byStore.entries()).map(([store, entries]) => (
+            <View key={store} className="bg-white border border-border rounded-xl overflow-hidden">
+              {/* Store header */}
+              <View className="flex-row items-center justify-between px-4 py-3 border-b border-border">
+                <View className="flex-row items-center gap-2">
+                  <Ionicons name="storefront-outline" size={16} color="#1D9E75" />
+                  <Text className="text-[15px] font-medium text-text-primary">{store}</Text>
+                </View>
+                <Text className="text-[13px] font-medium text-teal-600">
+                  {data!.currency}{' '}
+                  {entries.reduce((s, e) => s + parseFloat(e.chosen_price), 0).toFixed(2)}
+                </Text>
+              </View>
+
+              {/* Entry rows */}
+              {entries.map((entry, i) => {
+                const isLoading = actionLoadingId === entry.id;
+                return (
+                  <View
+                    key={entry.id}
+                    className={`px-4 py-3 flex-row items-center gap-3 ${
+                      i < entries.length - 1 ? 'border-b border-border' : ''
+                    }`}
+                  >
+                    {/* Mark done button */}
+                    <TouchableOpacity
+                      onPress={() => handleMarkDone(entry)}
+                      disabled={isLoading}
+                      className="w-7 h-7 rounded-full border-2 border-teal-400 items-center justify-center"
+                      activeOpacity={0.7}
+                    >
+                      {isLoading ? (
+                        <ActivityIndicator size="small" color="#1D9E75" />
+                      ) : (
+                        <Ionicons name="checkmark" size={14} color="#1D9E75" />
+                      )}
+                    </TouchableOpacity>
+
+                    {/* Item info */}
+                    <View className="flex-1">
+                      <Text className="text-[14px] text-text-primary">{entry.item_name}</Text>
+                      <Text className="text-[12px] text-text-faint mt-0.5">
+                        {entry.quantity} {entry.unit}
+                      </Text>
+                    </View>
+
+                    {/* Price */}
+                    <Text className="text-[14px] font-medium text-text-primary">
+                      {entry.currency} {parseFloat(entry.chosen_price).toFixed(2)}
+                    </Text>
+
+                    {/* Admin-only delete */}
+                    {isAdmin && (
+                      <TouchableOpacity
+                        onPress={() => handleDeleteEntry(entry)}
+                        disabled={isLoading}
+                        className="w-7 h-7 items-center justify-center"
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="close" size={18} color="#9CA3AF" />
+                      </TouchableOpacity>
                     )}
                   </View>
-                  <Text className="text-[12px] text-text-faint mt-0.5">{item.size} · {item.pricePerUnit} · qty {item.qty}</Text>
-                </View>
-                <Text className="text-[14px] font-medium text-text-primary">AED {item.price}</Text>
-              </View>
-            ))}
-          </View>
-        ))}
+                );
+              })}
+            </View>
+          ))}
 
-        {/* Approve CTA */}
-        <TouchableOpacity
-          className="bg-teal-600 rounded-xl py-4 items-center"
-          onPress={() => router.push('/weekly-approval')}
-          activeOpacity={0.85}
-        >
-          <Text className="text-[16px] font-semibold text-white">
-            {pendingApprovals > 0 ? `Waiting for ${pendingApprovals} approval${pendingApprovals > 1 ? 's' : ''}` : 'Approve & confirm purchase'}
-          </Text>
-        </TouchableOpacity>
+          {/* Admin: generate new report */}
+          {isAdmin && (
+            <TouchableOpacity
+              className="border border-teal-200 rounded-xl py-3.5 flex-row items-center justify-center gap-2"
+              onPress={() => router.push('/generate-report')}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="sparkles-outline" size={18} color="#1D9E75" />
+              <Text className="text-[14px] font-medium text-teal-600">Generate new report</Text>
+            </TouchableOpacity>
+          )}
 
-        <View style={{ height: 16 }} />
-      </ScrollView>
+          <View style={{ height: 16 }} />
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }

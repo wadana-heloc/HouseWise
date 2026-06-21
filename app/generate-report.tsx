@@ -12,29 +12,31 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useItemStore } from '../store/itemStore';
-import { useAuthStore } from '../store/authStore';
+import { useReportStore } from '../store/reportStore';
+import { searchPrices, getToBuyList } from '../services/toBuy';
 
 export default function GenerateReportScreen() {
   const router = useRouter();
   const { items, loading, error, fetchItems } = useItemStore();
-  const { userId } = useAuthStore();
+  const { setResults } = useReportStore();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [generating, setGenerating] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
 
-  // Items eligible for price comparison: anything not yet done
-  const reportItems = items.filter((i) => i.status !== 'done');
+  // Only pending + approved items are eligible (backend rejects anything else)
+  const reportItems = items.filter(
+    (i) => i.status === 'pending' || i.status === 'approved',
+  );
 
   useFocusEffect(
     useCallback(() => {
       fetchItems().then(() => {
-        // Auto-select all eligible items on first load
         setSelected(new Set(reportItems.map((i) => i.id)));
       });
     }, []),
   );
 
-  // Keep selection in sync if items change (e.g. after fetch)
+  // Keep selection in sync if items change after fetch
   useFocusEffect(
     useCallback(() => {
       setSelected(new Set(reportItems.map((i) => i.id)));
@@ -64,35 +66,72 @@ export default function GenerateReportScreen() {
     }
 
     setGenerating(true);
-    setLoadingMessage('Connecting to stores...');
+    setLoadingMessage('Checking your shopping list...');
 
     try {
+      // Check if there is already an existing to-buy list
+      let existingCount = 0;
+      try {
+        const existing = await getToBuyList();
+        existingCount = existing.item_count;
+      } catch {
+        // Non-fatal — if we can't check, proceed without the guard
+      }
+
+      const selectedItems = reportItems.filter((i) => selected.has(i.id));
+
+      // Build item strings: "Milk 2L", "Eggs 12pcs"
+      const itemStrings = selectedItems.map(
+        (i) => `${i.name} ${i.quantity}${i.unit}`,
+      );
+
+      setLoadingMessage('Searching Carrefour...');
+      // Cycle through messages while the agent runs (10-30s)
       const messages = [
-        'Searching Carrefour...',
         'Searching Lulu...',
         'Searching Union Coop...',
         'Searching Spinneys...',
         'Comparing prices...',
         'Building report...',
       ];
-      for (const msg of messages) {
-        setLoadingMessage(msg);
-        await new Promise((r) => setTimeout(r, 600));
+      let msgIdx = 0;
+      const msgInterval = setInterval(() => {
+        setLoadingMessage(messages[msgIdx % messages.length]);
+        msgIdx++;
+      }, 4000);
+
+      let results;
+      try {
+        results = await searchPrices(itemStrings, false);
+      } finally {
+        clearInterval(msgInterval);
       }
 
-      // TODO: replace with real agent call
-      // const selectedIds = Array.from(selected);
-      // await reportService.runAgent({ itemIds: selectedIds });
-      // const report = await reportService.getLatest();
-      // router.push({ pathname: '/report-results', params: { reportId: report.id } });
+      // Map results back to items (response order matches request order)
+      const storeItems = selectedItems.map((item, idx) => ({
+        id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        unit: item.unit,
+        priceResult: results.results[idx],
+      }));
 
+      setResults(storeItems, existingCount);
       router.push('/report-results');
-    } catch {
-      Alert.alert(
-        'Generation failed',
-        'Could not fetch prices from stores. Please check your connection and try again.',
-        [{ text: 'OK' }],
-      );
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 502) {
+        Alert.alert(
+          'No prices found',
+          'The price agent could not find any prices across all stores. Please try again.',
+          [{ text: 'Retry', onPress: handleGenerate }, { text: 'Cancel' }],
+        );
+      } else {
+        Alert.alert(
+          'Generation failed',
+          'Could not fetch prices from stores. Please check your connection and try again.',
+        );
+      }
     } finally {
       setGenerating(false);
       setLoadingMessage('');
@@ -151,7 +190,7 @@ export default function GenerateReportScreen() {
         <Ionicons name="sparkles-outline" size={18} color="#1D9E75" />
         <Text className="flex-1 text-[13px] text-teal-600 leading-5">
           Select items to compare prices across Carrefour, Lulu, Union Coop, and Spinneys.
-          The AI will return the 5 best options per item sorted by price.
+          The AI will find the best options per item sorted by price.
         </Text>
       </View>
 
@@ -197,12 +236,11 @@ export default function GenerateReportScreen() {
         {!loading && !error && reportItems.length > 0 && (
           <>
             <Text className="text-[12px] font-medium text-text-muted uppercase tracking-wider mb-1">
-              Pending items ({reportItems.length})
+              Eligible items ({reportItems.length})
             </Text>
 
             {reportItems.map((item) => {
               const isSelected = selected.has(item.id);
-              const isOwn = item.added_by === userId;
 
               return (
                 <TouchableOpacity
@@ -231,9 +269,14 @@ export default function GenerateReportScreen() {
                           <Text className="text-[10px] font-medium text-amber-800">Urgent</Text>
                         </View>
                       )}
+                      {item.status === 'approved' && (
+                        <View className="bg-teal-50 rounded px-1.5 py-0.5">
+                          <Text className="text-[10px] font-medium text-teal-600">Approved</Text>
+                        </View>
+                      )}
                     </View>
                     <Text className="text-[12px] text-text-faint mt-0.5">
-                      {isOwn ? 'You' : 'Member'} · {item.quantity} {item.unit}
+                      {item.quantity} {item.unit}
                     </Text>
                   </View>
 

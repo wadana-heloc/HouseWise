@@ -27,13 +27,6 @@ function getGreeting(): string {
     return 'Good evening';
 }
 
-function getNextReportDate(): string {
-    const now = new Date();
-    const daysUntilSunday = now.getDay() === 0 ? 7 : 7 - now.getDay();
-    const next = new Date(now);
-    next.setDate(now.getDate() + daysUntilSunday);
-    return next.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-}
 
 function getInitials(name: string): string {
     return name
@@ -153,12 +146,6 @@ export default function HomeScreen() {
                             sub="Photograph product"
                             onPress={() => router.push('/image-scan')}
                         />
-                        <QuickAction
-                            icon="document-text-outline"
-                            label="Weekly report"
-                            sub="Review & approve"
-                            onPress={() => router.push('/weekly-approval')}
-                        />
                         {/* <QuickAction
                             icon="settings-outline"
                             label="Settings"
@@ -259,31 +246,6 @@ export default function HomeScreen() {
                             </Text>
                         </View>
                     )}
-                </View>
-
-                {/* ── Weekly report ── */}
-                <View className="px-5 mt-6">
-                    <Text className="text-[12px] font-medium text-text-muted tracking-wider uppercase mb-3">Weekly report</Text>
-                    <View className="bg-white border border-border rounded-2xl p-4 gap-3">
-                        <View className="flex-row items-start gap-3">
-                            <View className="w-9 h-9 rounded-xl bg-teal-50 items-center justify-center mt-0.5">
-                                <Ionicons name="sparkles-outline" size={18} color="#1D9E75" />
-                            </View>
-                            <View className="flex-1">
-                                <Text className="text-[14px] font-medium text-text-primary">AI-generated summary</Text>
-                                <Text className="text-[12px] text-text-muted mt-0.5">
-                                    Next delivery: {getNextReportDate()}
-                                </Text>
-                            </View>
-                        </View>
-                        <TouchableOpacity
-                            className="bg-teal-600 rounded-xl py-3.5 flex-row items-center justify-center gap-2"
-                            onPress={() => router.push('/generate-report')}
-                        >
-                            <Ionicons name="sparkles-outline" size={18} color="#fff" />
-                            <Text className="text-[15px] font-semibold text-white">Generate Report</Text>
-                        </TouchableOpacity>
-                    </View>
                 </View>
 
                 {/* ── Low stock ── */}
