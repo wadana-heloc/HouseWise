@@ -6,6 +6,7 @@ import {
   StatusBar,
   ActivityIndicator,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   Modal,
   TextInput,
   Alert,
@@ -325,63 +326,70 @@ export default function FamilyMembersScreen() {
         animationType="fade"
         onRequestClose={() => setEditTarget(null)}
       >
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <View className="bg-white rounded-t-3xl px-5 pt-5 pb-8">
-              <View className="flex-row items-center mb-5">
-                <Text className="flex-1 text-[18px] font-semibold text-text-primary">
-                  Edit {editTarget?.display_name}
-                </Text>
-                <TouchableOpacity onPress={() => setEditTarget(null)} hitSlop={8}>
-                  <Ionicons name="close" size={22} color="#6B9E8A" />
-                </TouchableOpacity>
-              </View>
-
-              <View className="gap-4">
-                <View>
-                  <Text className="text-[11px] font-medium text-text-muted uppercase tracking-wider mb-1.5">
-                    Display name
-                  </Text>
-                  <TextInput
-                    value={editName}
-                    onChangeText={setEditName}
-                    className="bg-bg-primary border border-border rounded-xl px-4 py-3.5 text-[14px] text-text-primary"
-                    placeholder="Full name"
-                    placeholderTextColor="#B0C4BC"
-                    autoCapitalize="words"
-                  />
-                </View>
-                <View>
-                  <Text className="text-[11px] font-medium text-text-muted uppercase tracking-wider mb-1.5">
-                    Email address
-                  </Text>
-                  <TextInput
-                    value={editEmail}
-                    onChangeText={setEditEmail}
-                    className="bg-bg-primary border border-border rounded-xl px-4 py-3.5 text-[14px] text-text-primary"
-                    placeholder="email@example.com"
-                    placeholderTextColor="#B0C4BC"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                  />
-                </View>
-              </View>
-
-              <TouchableOpacity
-                className={`mt-5 rounded-xl py-4 items-center ${editSaving ? 'bg-teal-300' : 'bg-teal-600'}`}
-                onPress={handleSaveEdit}
-                disabled={editSaving}
-                activeOpacity={0.85}
-              >
-                {editSaving ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text className="text-[15px] font-semibold text-white">Save changes</Text>
-                )}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <TouchableWithoutFeedback onPress={() => setEditTarget(null)}>
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} />
+          </TouchableWithoutFeedback>
+          <View className="bg-white rounded-t-3xl px-5 pt-5 pb-8">
+            <View className="flex-row items-center mb-5">
+              <Text className="flex-1 text-[18px] font-semibold text-text-primary">
+                Edit {editTarget?.display_name}
+              </Text>
+              <TouchableOpacity onPress={() => setEditTarget(null)} hitSlop={8}>
+                <Ionicons name="close" size={22} color="#6B9E8A" />
               </TouchableOpacity>
             </View>
-          </KeyboardAvoidingView>
-        </View>
+
+            <View className="gap-4">
+              <View>
+                <Text className="text-[11px] font-medium text-text-muted uppercase tracking-wider mb-1.5">
+                  Display name
+                </Text>
+                <TextInput
+                  value={editName}
+                  onChangeText={setEditName}
+                  className="bg-bg-primary border border-border rounded-xl px-4 py-3.5 text-[14px] text-text-primary"
+                  placeholder="Full name"
+                  placeholderTextColor="#B0C4BC"
+                  autoCapitalize="words"
+                  returnKeyType="next"
+                />
+              </View>
+              <View>
+                <Text className="text-[11px] font-medium text-text-muted uppercase tracking-wider mb-1.5">
+                  Email address
+                </Text>
+                <TextInput
+                  value={editEmail}
+                  onChangeText={setEditEmail}
+                  className="bg-bg-primary border border-border rounded-xl px-4 py-3.5 text-[14px] text-text-primary"
+                  placeholder="email@example.com"
+                  placeholderTextColor="#B0C4BC"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  returnKeyType="done"
+                  onSubmitEditing={handleSaveEdit}
+                />
+              </View>
+            </View>
+
+            <TouchableOpacity
+              className={`mt-5 rounded-xl py-4 items-center ${editSaving ? 'bg-teal-300' : 'bg-teal-600'}`}
+              onPress={handleSaveEdit}
+              disabled={editSaving}
+              activeOpacity={0.85}
+            >
+              {editSaving ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text className="text-[15px] font-semibold text-white">Save changes</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── Reset password modal ── */}
@@ -391,65 +399,71 @@ export default function FamilyMembersScreen() {
         animationType="fade"
         onRequestClose={() => { setResetTarget(null); setNewPassword(''); }}
       >
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <View className="bg-white rounded-t-3xl px-5 pt-5 pb-8">
-              <View className="flex-row items-center mb-4">
-                <Text className="flex-1 text-[18px] font-semibold text-text-primary">Reset password</Text>
-                <TouchableOpacity
-                  onPress={() => { setResetTarget(null); setNewPassword(''); }}
-                  hitSlop={8}
-                >
-                  <Ionicons name="close" size={22} color="#6B9E8A" />
-                </TouchableOpacity>
-              </View>
-
-              <View className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4 flex-row gap-2 items-start">
-                <Ionicons name="information-circle-outline" size={16} color="#F59E0B" style={{ marginTop: 1 }} />
-                <Text className="flex-1 text-[12px] text-amber-700 leading-5">
-                  No email is sent. Share the new password with {resetTarget?.display_name} directly.
-                </Text>
-              </View>
-
-              <View>
-                <Text className="text-[11px] font-medium text-text-muted uppercase tracking-wider mb-1.5">
-                  New password
-                </Text>
-                <View className="flex-row items-center bg-bg-primary border border-border rounded-xl px-4">
-                  <TextInput
-                    value={newPassword}
-                    onChangeText={setNewPassword}
-                    className="flex-1 py-3.5 text-[14px] text-text-primary"
-                    placeholder="Enter new password"
-                    placeholderTextColor="#B0C4BC"
-                    secureTextEntry={!showNewPassword}
-                    autoCapitalize="none"
-                  />
-                  <TouchableOpacity onPress={() => setShowNewPassword((p) => !p)} hitSlop={8}>
-                    <Ionicons
-                      name={showNewPassword ? 'eye-off-outline' : 'eye-outline'}
-                      size={18}
-                      color="#A8C4B8"
-                    />
-                  </TouchableOpacity>
-                </View>
-              </View>
-
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <TouchableWithoutFeedback onPress={() => { setResetTarget(null); setNewPassword(''); }}>
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} />
+          </TouchableWithoutFeedback>
+          <View className="bg-white rounded-t-3xl px-5 pt-5 pb-8">
+            <View className="flex-row items-center mb-4">
+              <Text className="flex-1 text-[18px] font-semibold text-text-primary">Reset password</Text>
               <TouchableOpacity
-                className={`mt-5 rounded-xl py-4 items-center ${resetSaving ? 'bg-amber-300' : 'bg-amber-500'}`}
-                onPress={handleResetPassword}
-                disabled={resetSaving}
-                activeOpacity={0.85}
+                onPress={() => { setResetTarget(null); setNewPassword(''); }}
+                hitSlop={8}
               >
-                {resetSaving ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text className="text-[15px] font-semibold text-white">Set new password</Text>
-                )}
+                <Ionicons name="close" size={22} color="#6B9E8A" />
               </TouchableOpacity>
             </View>
-          </KeyboardAvoidingView>
-        </View>
+
+            <View className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4 flex-row gap-2 items-start">
+              <Ionicons name="information-circle-outline" size={16} color="#F59E0B" style={{ marginTop: 1 }} />
+              <Text className="flex-1 text-[12px] text-amber-700 leading-5">
+                No email is sent. Share the new password with {resetTarget?.display_name} directly.
+              </Text>
+            </View>
+
+            <View>
+              <Text className="text-[11px] font-medium text-text-muted uppercase tracking-wider mb-1.5">
+                New password
+              </Text>
+              <View className="flex-row items-center bg-bg-primary border border-border rounded-xl px-4">
+                <TextInput
+                  value={newPassword}
+                  onChangeText={setNewPassword}
+                  className="flex-1 py-3.5 text-[14px] text-text-primary"
+                  placeholder="Enter new password"
+                  placeholderTextColor="#B0C4BC"
+                  secureTextEntry={!showNewPassword}
+                  autoCapitalize="none"
+                  returnKeyType="done"
+                  onSubmitEditing={handleResetPassword}
+                />
+                <TouchableOpacity onPress={() => setShowNewPassword((p) => !p)} hitSlop={8}>
+                  <Ionicons
+                    name={showNewPassword ? 'eye-off-outline' : 'eye-outline'}
+                    size={18}
+                    color="#A8C4B8"
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              className={`mt-5 rounded-xl py-4 items-center ${resetSaving ? 'bg-amber-300' : 'bg-amber-500'}`}
+              onPress={handleResetPassword}
+              disabled={resetSaving}
+              activeOpacity={0.85}
+            >
+              {resetSaving ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text className="text-[15px] font-semibold text-white">Set new password</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

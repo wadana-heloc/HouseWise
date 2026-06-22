@@ -38,7 +38,6 @@ export default function ProfileScreen() {
       title: 'Reports',
       items: [
         { icon: 'document-text-outline', label: 'Weekly report',   route: '/(tabs)/report' },
-        { icon: 'time-outline',          label: 'Purchase history', route: '/history' },
       ],
     },
     {

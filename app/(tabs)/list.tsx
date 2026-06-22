@@ -12,7 +12,7 @@ import { useAuthStore } from '../../store/authStore';
 import { useMemberStore } from '../../store/memberStore';
 import type { Item } from '../../services/items';
 
-const FILTERS = ['All', 'Urgent', 'Done'];
+const FILTERS = ['All', 'Mine', 'Urgent', 'Done'];
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -45,6 +45,7 @@ export default function ListScreen() {
 
   const filtered = items.filter((item) => {
     const matchSearch = item.name.toLowerCase().includes(search.toLowerCase());
+    if (filter === 'Mine')   return matchSearch && item.added_by === userId;
     if (filter === 'Urgent') return matchSearch && item.urgent && item.status !== 'done';
     if (filter === 'Done')   return matchSearch && item.status === 'done';
     return matchSearch;

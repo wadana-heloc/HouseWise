@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useReportStore, type ReportStoreItem } from '../store/reportStore';
-import { saveToBuyList, type PriceOption } from '../services/toBuy';
+import { saveToBuyList, getToBuyList, type PriceOption } from '../services/toBuy';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -104,13 +104,49 @@ export default function ReportResultsScreen() {
     }
   }
 
+  async function doAppend() {
+    setIsSaving(true);
+    try {
+      const newEntries = items
+        .filter((i) => i.selectedOption !== null)
+        .map((i) => ({
+          item_id: i.id,
+          chosen_store_url: i.selectedOption!.store_url,
+          chosen_store_name: i.selectedOption!.store_name,
+          chosen_price: i.selectedOption!.price.toFixed(2),
+          currency: 'AED',
+        }));
+
+      const newItemIds = new Set(newEntries.map((e) => e.item_id));
+      const existing = await getToBuyList();
+      const existingEntries = existing.entries
+        .filter((e) => !newItemIds.has(e.item_id))
+        .map((e) => ({
+          item_id: e.item_id,
+          chosen_store_url: e.chosen_store_url,
+          chosen_store_name: e.chosen_store_name,
+          chosen_price: e.chosen_price,
+          currency: e.currency,
+        }));
+
+      await saveToBuyList([...existingEntries, ...newEntries]);
+      clear();
+      router.replace('/(tabs)/report');
+    } catch {
+      Alert.alert('Failed to save', 'Could not update the shopping list. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   function handleSave() {
     if (existingToBuyCount > 0) {
       Alert.alert(
-        'Replace shopping list?',
-        `You have ${existingToBuyCount} item${existingToBuyCount !== 1 ? 's' : ''} on your shopping list. Saving a new list will replace them.`,
+        'Shopping list already exists',
+        `You have ${existingToBuyCount} item${existingToBuyCount !== 1 ? 's' : ''} on your shopping list. What would you like to do?`,
         [
           { text: 'Cancel', style: 'cancel' },
+          { text: 'Add to existing', onPress: doAppend },
           { text: 'Replace', style: 'destructive', onPress: doSave },
         ],
       );

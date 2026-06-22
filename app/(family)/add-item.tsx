@@ -50,23 +50,25 @@ export default function FamilyAddItemScreen() {
     const quantity = Math.max(0.5, parsed);
     setSubmitting(true);
     try {
+      const addedName = name.trim();
       await addItem({
-        name: name.trim(),
+        name: addedName,
         category: category ? category.toLowerCase() : 'other',
         quantity,
         unit,
         urgent,
         notes: notes.trim() || undefined,
       });
+      resetForm();
 
       if (lowStockFlagId) {
         deleteFlag(lowStockFlagId).catch(() => {});
-        Alert.alert('Added to list', `"${name.trim()}" has been added to the shopping list.`, [
+        Alert.alert('Added to list', `"${addedName}" has been added to the shopping list.`, [
           { text: 'OK', onPress: () => router.back() },
         ]);
       } else {
-        Alert.alert('Item added', `"${name.trim()}" has been added to the list.`, [
-          { text: 'Add another', onPress: resetForm },
+        Alert.alert('Item added', `"${addedName}" has been added to the list.`, [
+          { text: 'Add another', style: 'cancel' },
           { text: 'Go to list', onPress: () => router.push('/(family)/list') },
         ]);
       }

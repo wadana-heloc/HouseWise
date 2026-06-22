@@ -228,9 +228,10 @@ const QUICK_ACTIONS: {
 }[] = [
     { icon: 'add-circle-outline', label: 'Add Item',  color: '#1D9E75', bg: '#E1F5EE', route: '/(family)/add-item' },
     { icon: 'barcode-outline',    label: 'Scan',       color: '#7C3AED', bg: '#EDE9FE', route: '/barcode-confirm' },
-    { icon: 'camera-outline',     label: 'Photo',      color: '#DB2777', bg: '#FCE7F3', route: '/image-scan' },
-    { icon: 'book-outline',       label: 'Cookbook',   color: '#D97706', bg: '#FEF3C7', route: '/cookbook' },
-    { icon: 'calendar-outline',   label: 'Meal Plan',  color: '#1D4ED8', bg: '#DBEAFE', route: '/meal-plan' },
+    { icon: 'camera-outline',       label: 'Photo',      color: '#DB2777', bg: '#FCE7F3', route: '/image-scan' },
+    { icon: 'book-outline',         label: 'Cookbook',   color: '#D97706', bg: '#FEF3C7', route: '/cookbook' },
+    { icon: 'calendar-outline',     label: 'Meal Plan',  color: '#1D4ED8', bg: '#DBEAFE', route: '/meal-plan' },
+    { icon: 'alert-circle-outline', label: 'Low Stock',  color: '#EF4444', bg: '#FEE2E2', route: '/(family)/low-stock' },
 ];
 
 function QuickActions({ onPress }: { onPress: (route: string) => void }) {
@@ -255,7 +256,7 @@ function QuickActionItem({
                 <View style={[s.qaIconBox, { backgroundColor: bg }]}>
                     <Ionicons name={icon} size={24} color={color} />
                 </View>
-                <Text style={s.qaLabel}>{label}</Text>
+                <Text style={s.qaLabel} numberOfLines={2}>{label}</Text>
             </Animated.View>
         </TouchableOpacity>
     );
@@ -685,7 +686,7 @@ const s = StyleSheet.create({
     // Quick actions
     qaScroll: { paddingHorizontal: 16, gap: 10, paddingBottom: 2 },
     qaCard: {
-        alignItems: 'center', width: 86,
+        alignItems: 'center', width: 86, height: 122,
         backgroundColor: WHITE, borderRadius: 18,
         paddingVertical: 16, paddingHorizontal: 12,
         borderWidth: 1, borderColor: BORDER,
