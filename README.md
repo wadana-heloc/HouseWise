@@ -30,6 +30,7 @@ A household management app for families — shared shopping lists, a collaborati
 - **Dietary & health preferences** — per-member toggles (high-protein, low-calories, low-carbs, …) and free-text lists (allergies, dislikes, dietary types)
 - **Preferred stores** — admin maintains a list of stores used for price comparisons
 - **Price comparison reports** — generate a shopping report comparing prices across your household's preferred stores
+- **Weekly email reports** — automated summary of household shopping activity, store spend breakdown, and upcoming meal plan preview sent to a configured email address
 
 ---
 
@@ -46,7 +47,8 @@ A household management app for families — shared shopping lists, a collaborati
 | Styling | NativeWind (Tailwind CSS for React Native) |
 | Forms & validation | React Hook Form + Zod |
 | HTTP client | Axios (JWT bearer, auto-refresh on 401) |
-| Camera / scanning | expo-camera + expo-barcode-scanner |
+| Camera / scanning | expo-camera (barcode + photo capture) |
+| Image picker | expo-image-picker (gallery selection) |
 | Secure storage | expo-secure-store |
 | Notifications | expo-notifications |
 
@@ -71,11 +73,11 @@ housewise/
 ├── constants/            # Theme colors, shared constants
 ├── services/             # API client modules (one file per domain)
 ├── store/                # Zustand state stores
+├── ai_agents/            # Image, cookbook, meal-plan, price agents
+├── supabase/             # Database migrations (ordered SQL files)
 ├── backend/              # FastAPI application
-│   ├── app/              # Route handlers, schemas, auth deps
-│   ├── ai_agents/        # Image, cookbook, meal-plan, price agents
-│   └── supabase/         # Database migrations (ordered SQL files)
-└── docs/                 # Flow and architecture diagrams
+│   └── app/              # Route handlers, schemas, auth middleware
+└── docs/                 # Flow diagrams, architecture docs, and User Guide
 ```
 
 ---
@@ -168,6 +170,9 @@ supabase/migrations/
   0010_dietary_prefs_and_week_notes.sql
   0011_meal_plan_day_reactions.sql
   0012_recipe_personalized_descriptions.sql
+  0013_household_report_settings.sql
+  0014_recipe_story.sql
+  0015_to_buy_list.sql
 ```
 
 ---
